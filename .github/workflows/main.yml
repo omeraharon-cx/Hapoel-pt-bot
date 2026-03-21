@@ -1,0 +1,33 @@
+name: Hapoel Updates Timer
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # הרצה כל 15 דקות בדיוק
+  workflow_dispatch: # מאפשר לנו להריץ את הבוט ידנית לבדיקה
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # חשוב מאוד: מאפשר לבוט לזכור אילו כתבות הוא כבר שלח
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Bot
+        run: python bot.py
+
+      - name: Save history
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add seen_links.txt
+          git commit -m "Update history" || echo "No changes to commit"
+          git push
