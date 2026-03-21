@@ -22,6 +22,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         run: python bot.py
 
       - name: Save history
