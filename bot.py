@@ -4,10 +4,10 @@ from bs4 import BeautifulSoup
 import google.generativeai as genai
 import os
 
-# הגדרות שחיברנו יחד
-GEMINI_API_KEY = "AIzaSyDXsWHj0gxiQlX4NBF1PvM15eg-55V2nOs"
-TELEGRAM_TOKEN = "8649048193:AAHRW8fM77tdQN2ryht2AAMKTwn-b5czfIs"
-CHAT_ID = "425605110"
+# הגדרות שמושכות מידע מה"כספת" של גיטהאב
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = "425605110" # זה יכול להישאר ככה, זה לא סודי
 
 # מקורות החדשות
 RSS_FEEDS = [
