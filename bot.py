@@ -56,7 +56,7 @@ def main():
             title = entry.title
             link = entry.link
             
-            keywords = ["הפועל פתח תקווה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
+            keywords = ["ישראל", "מכבי", "כדורגל"]
             if any(key in title for key in keywords):
                 # בדיקה: האם הקישור חדש וגם האם הכותרת לא הופיעה כבר (מאתר אחר)
                 if link not in history and title not in history:
