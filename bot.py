@@ -34,12 +34,18 @@ def get_full_article_text(url):
 def get_ai_summary(text):
     if not text: return None
     try:
-        prompt = f"סכם ב-3 משפטים עבור אוהד הפועל פתח תקווה: {text[:4000]}"
+        # הנחיה סופר-ממוקדת: רק הפועל פתח תקווה
+        prompt = (
+            f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים. "
+            f"דגש קריטי: התייחס אך ורק להקשר של הפועל פתח תקווה. "
+            f"אם הכתבה מזכירה קבוצות אחרות, התעלם מהן והתמקד במידע שרלוונטי לכחולים מפתח תקווה. "
+            f"הנה התוכן: {text[:5000]}"
+        )
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         print(f"AI Quota Issue: {e}")
-        return None # מחזיר None כדי שנדע להשתמש בגיבוי
+        return None
 
 def send_telegram_msg(text):
     try:
@@ -56,8 +62,10 @@ def main():
         history = f.read().splitlines()
 
     new_processed = []
-    # רק מילים של הפועל פ"ת - בלי ישראל!
-    keywords = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "פ\"ת", "מלאבס", "הכחולים"]
+    
+    # מילות מפתח מדויקות (הוספתי את המילה 'הפועל' לכל רצף)
+    hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
+    maccabi_keys = ["מכבי פתח תקווה", "מכבי פתח תקוה", "מכבי פ\"ת", "מכבי פתח-תקווה"]
 
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
@@ -66,22 +74,27 @@ def main():
             if link in history or title in history: continue
                 
             content = get_full_article_text(link)
-            if any(key in title or key in content for key in keywords):
+            full_text_to_check = (title + " " + content).lower()
+            
+            # לוגיקת סינון: חייב להכיל מילת מפתח של הפועל
+            is_hapoel = any(key in full_text_to_check for key in hapoel_keys)
+            # אם מכיל מכבי אבל לא מכיל הפועל - דלג
+            is_maccabi_only = any(key in full_text_to_check for key in maccabi_keys) and not is_hapoel
+            
+            if is_hapoel and not is_maccabi_only:
                 summary = get_ai_summary(content)
                 
                 if summary:
                     msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                 else:
-                    # מנגנון גיבוי אם ה-AI חסום
                     msg = f"⚽ *כתבה חדשה (ה-AI בעומס)*\n\n_{title}_\n\n🔗 [לחצו לקריאה המלאה]({link})"
                 
                 send_telegram_msg(msg)
                 new_processed.append(link)
                 new_processed.append(title)
-                print(f"נשלחה הודעה על: {title}")
-                time.sleep(10) # המתנה של 10 שניות כדי לא לחרוג מהמכסה
+                time.sleep(15) # המתנה כדי לא לעצבן את גוגל
 
-    # אתר רשמי
+    # אתר רשמי - תמיד רלוונטי
     try:
         resp = requests.get("https://www.hapoelpt.com/news", timeout=10)
         soup = BeautifulSoup(resp.content, 'html.parser')
