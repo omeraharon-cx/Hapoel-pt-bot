@@ -4,11 +4,12 @@ from bs4 import BeautifulSoup
 import google.generativeai as genai
 import os
 
-# הגדרות
+# הגדרות אבטחה
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "425605110"
 
+# רשימת המקורות
 RSS_FEEDS = [
     "https://www.one.co.il/rss",
     "https://m.sport5.co.il/Rss.aspx",
@@ -21,24 +22,26 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 def get_full_article_text(url):
+    """שואב את כל תוכן הכתבה ומנרמל תווים מיוחדים"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'} # מתחזה לדפדפן כדי שלא יחסמו אותנו
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # מחפש טקסט ביותר מקומות (גם פסקאות וגם דיבים של תוכן)
+        # סורק פסקאות, כותרות משנה ודיבים של תוכן
         text_blocks = soup.find_all(['p', 'div', 'h2'])
         full_text = " ".join([t.text for t in text_blocks if len(t.text) > 20])
         
-        # נירמול גרשיים: הופך את כל סוגי הגרשיים והצ'ופצ'יקים לתו אחד סטנדרטי
+        # נירמול גרשיים (הופך את כל סוגי הצ'ופצ'יקים לתו תקני אחד)
         normalized_text = full_text.replace('״', '"').replace("'", '"').replace('"', '"')
         return normalized_text
     except:
         return ""
 
 def get_ai_summary(text):
+    """מייצר סיכום בעזרת ה-AI"""
     try:
-        prompt = f"סכם את הכתבה הבאה ב-3 עד 4 משפטים קצרים וממצים עבור אוהד הפועל פתח תקווה. הנה התוכן: {text[:4000]}"
+        prompt = f"סכם את הכתבה הבאה ב-3 עד 4 משפטים קצרים וממצים עבור אוהד ספורט. הנה התוכן: {text[:4000]}"
         summary = model.generate_content(prompt)
         return summary.text
     except:
@@ -58,31 +61,36 @@ def main():
         history = f.read().splitlines()
 
     new_processed = []
-    # רשימת מילים גמישה יותר (כולל כתיב חסר וסוגי גרשיים)
-    keywords = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "פ\"ת", "מלאבס", "הכחולים"]
+    # מילות המפתח המורחבות - כולל 'ישראל' לטסט
+    keywords = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "פ\"ת", "מלאבס", "הכחולים", "ישראל"]
 
     for feed_url in RSS_FEEDS:
+        print(f"בודק מקור: {feed_url}")
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             link = entry.link
             title = entry.title
             
+            # אם כבר סרקנו את הקישור הזה בעבר - דלג
             if link in history or title in history:
                 continue
                 
             content = get_full_article_text(link)
             
-            # בדיקה אם אחת המילים נמצאת בכותרת או בתוכן (אחרי נירמול)
+            # נירמול כותרת לבדיקה
             title_norm = title.replace('״', '"').replace("'", '"')
+            
+            # חיפוש מילות מפתח בכותרת או בתוכן המלא
             if any(key in title_norm for key in keywords) or any(key in content for key in keywords):
+                print(f"נמצאה התאמה: {title}")
                 summary = get_ai_summary(content)
                 if summary:
-                    msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
+                    msg = f"⚽ *עדכון ספורט חדש*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     send_telegram_msg(msg)
                     new_processed.append(link)
                     new_processed.append(title)
 
-    # אתר רשמי
+    # סריקת האתר הרשמי
     try:
         url = "https://www.hapoelpt.com/news"
         resp = requests.get(url, timeout=10)
@@ -99,6 +107,7 @@ def main():
                         new_processed.append(full_url)
     except: pass
 
+    # עדכון היסטוריה
     if new_processed:
         with open(db_file, 'a') as f:
             for item in new_processed:
