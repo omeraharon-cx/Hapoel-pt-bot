@@ -29,8 +29,9 @@ jobs:
 
       - name: Save history
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+         git config --local user.email "action@github.com"
+          git config --local user.name "github-actions"
           git add seen_links.txt
-          git commit -m "Update history" || echo "No changes to commit"
+          git commit -m "Update history" || exit 0
+          git pull --rebase origin main  # השורה הזו פותרת את הבעיה!
           git push
