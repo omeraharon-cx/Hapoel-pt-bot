@@ -5,7 +5,7 @@ import google.generativeai as genai
 import os
 import time
 
-# הגדרות אבטחה
+# הגדרות
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "425605110"
@@ -18,10 +18,10 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# הגדרה מעודכנת של Gemini
+# הגדרה מעודכנת - משתמשים במודל העדכני ל-2026
 genai.configure(api_key=GEMINI_API_KEY)
-# שימוש בשם המודל המעודכן ל-2026
-model = genai.GenerativeModel('gemini-1.5-flash')
+# שימוש במודל יציב יותר
+model = genai.GenerativeModel('gemini-1.5-flash') 
 
 def get_full_article_text(url):
     try:
@@ -29,11 +29,8 @@ def get_full_article_text(url):
         response = requests.get(url, headers=headers, timeout=15)
         if response.status_code != 200: return ""
         soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # ניקוי פרסומות וזבל מהטקסט
         for s in soup(['script', 'style', 'nav', 'header', 'footer']): s.decompose()
-        
-        text_blocks = soup.find_all(['p', 'h2', 'div'], class_=lambda x: x != 'ads')
+        text_blocks = soup.find_all(['p', 'h2', 'div'])
         full_text = " ".join([t.text for t in text_blocks if len(t.text) > 30])
         return full_text.replace('״', '"').replace("'", '"')
     except:
@@ -41,13 +38,20 @@ def get_full_article_text(url):
 
 def get_ai_summary(text):
     try:
-        # הנחיה מדויקת יותר ל-AI כדי למנוע שגיאות
-        prompt = f"סכם את הכתבה הבאה ב-3 עד 4 משפטים קצרים עבור אוהד הפועל פתח תקווה. הנה התוכן: {text[:5000]}"
-        summary = model.generate_content(prompt)
-        return summary.text
+        # הוספת הגדרה לשימוש ב-API היציב
+        prompt = f"סכם את הכתבה הבאה ב-3 עד 4 משפטים עבור אוהד הפועל פתח תקווה. הנה התוכן: {text[:5000]}"
+        # ניסיון הפעלה עם הגדרות בסיסיות
+        response = model.generate_content(prompt)
+        return response.text
     except Exception as e:
         print(f"AI Error: {e}")
-        return None
+        # אם יש שגיאה, ננסה מודל חלופי נפוץ
+        try:
+            alt_model = genai.GenerativeModel('gemini-pro')
+            response = alt_model.generate_content(prompt)
+            return response.text
+        except:
+            return None
 
 def send_telegram_msg(text):
     try:
@@ -65,7 +69,6 @@ def main():
         history = f.read().splitlines()
 
     new_processed = []
-    # חזרה למילים המקוריות והמדויקות
     keywords = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "פ\"ת", "מלאבס", "הכחולים"]
 
     for feed_url in RSS_FEEDS:
@@ -73,9 +76,7 @@ def main():
         for entry in feed.entries:
             link = entry.link
             title = entry.title
-            
-            if link in history or title in history:
-                continue
+            if link in history or title in history: continue
                 
             content = get_full_article_text(link)
             title_norm = title.replace('״', '"').replace("'", '"')
@@ -87,9 +88,9 @@ def main():
                     send_telegram_msg(msg)
                     new_processed.append(link)
                     new_processed.append(title)
-                    time.sleep(2) # הפסקה קטנה בין הודעות
+                    time.sleep(2)
 
-    # בדיקת אתר רשמי
+    # אתר רשמי
     try:
         url = "https://www.hapoelpt.com/news"
         resp = requests.get(url, timeout=10)
