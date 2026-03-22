@@ -18,34 +18,28 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# הגדרה מעודכנת ל-2026
 genai.configure(api_key=GEMINI_API_KEY)
-# שימוש במודל היציב gemini-2.0-flash שפותר את שגיאת ה-404
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 def get_full_article_text(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code != 200: return ""
         soup = BeautifulSoup(response.content, 'html.parser')
-        for s in soup(['script', 'style', 'nav', 'header', 'footer']): s.decompose()
-        text_blocks = soup.find_all(['p', 'h2', 'div'])
-        full_text = " ".join([t.text for t in text_blocks if len(t.text) > 30])
-        return full_text.replace('״', '"').replace("'", '"')
-    except:
-        return ""
+        for s in soup(['script', 'style']): s.decompose()
+        text_blocks = soup.find_all(['p', 'h2'])
+        return " ".join([t.text for t in text_blocks if len(t.text) > 30]).replace('״', '"').replace("'", '"')
+    except: return ""
 
 def get_ai_summary(text):
+    if not text: return None
     try:
-        # הנחיה לסיכום
-        prompt = f"סכם את הכתבה הבאה ב-3 עד 4 משפטים עבור אוהד הפועל פתח תקווה. הנה התוכן: {text[:5000]}"
-        # הפעלה ישירה של המודל המעודכן
+        prompt = f"סכם ב-3 משפטים עבור אוהד הפועל פתח תקווה: {text[:4000]}"
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        print(f"AI Error: {e}")
-        return None
+        print(f"AI Quota Issue: {e}")
+        return None # מחזיר None כדי שנדע להשתמש בגיבוי
 
 def send_telegram_msg(text):
     try:
@@ -58,47 +52,47 @@ def main():
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
-    
     with open(db_file, 'r') as f:
         history = f.read().splitlines()
 
     new_processed = []
+    # רק מילים של הפועל פ"ת - בלי ישראל!
     keywords = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "פ\"ת", "מלאבס", "הכחולים"]
 
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
-            link = entry.link
-            title = entry.title
+            link, title = entry.link, entry.title
             if link in history or title in history: continue
                 
             content = get_full_article_text(link)
-            title_norm = title.replace('״', '"').replace("'", '"')
-            
-            if any(key in title_norm for key in keywords) or any(key in content for key in keywords):
+            if any(key in title or key in content for key in keywords):
                 summary = get_ai_summary(content)
+                
                 if summary:
                     msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
-                    send_telegram_msg(msg)
-                    new_processed.append(link)
-                    new_processed.append(title)
-                    time.sleep(2)
+                else:
+                    # מנגנון גיבוי אם ה-AI חסום
+                    msg = f"⚽ *כתבה חדשה (ה-AI בעומס)*\n\n_{title}_\n\n🔗 [לחצו לקריאה המלאה]({link})"
+                
+                send_telegram_msg(msg)
+                new_processed.append(link)
+                new_processed.append(title)
+                print(f"נשלחה הודעה על: {title}")
+                time.sleep(10) # המתנה של 10 שניות כדי לא לחרוג מהמכסה
 
-    # בדיקת אתר רשמי
+    # אתר רשמי
     try:
-        url = "https://www.hapoelpt.com/news"
-        resp = requests.get(url, timeout=10)
+        resp = requests.get("https://www.hapoelpt.com/news", timeout=10)
         soup = BeautifulSoup(resp.content, 'html.parser')
         for a in soup.find_all('a', href=True):
             link = a['href']
             if "/news/" in link:
                 full_url = link if link.startswith("http") else f"https://www.hapoelpt.com{link}"
                 if full_url not in history:
-                    text = get_full_article_text(full_url)
-                    summary = get_ai_summary(text)
-                    if summary:
-                        send_telegram_msg(f"🔵 *חדשות מהאתר הרשמי*\n\n{summary}\n\n🔗 [לכתבה המלאה]({full_url})")
-                        new_processed.append(full_url)
+                    send_telegram_msg(f"🔵 *חדשות מהאתר הרשמי*\n\n🔗 [לכתבה]({full_url})")
+                    new_processed.append(full_url)
+                    time.sleep(5)
     except: pass
 
     if new_processed:
