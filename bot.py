@@ -18,10 +18,10 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# הגדרה מעודכנת - משתמשים במודל העדכני ל-2026
+# הגדרה מעודכנת ל-2026
 genai.configure(api_key=GEMINI_API_KEY)
-# שימוש במודל יציב יותר
-model = genai.GenerativeModel('gemini-1.5-flash') 
+# שימוש במודל היציב gemini-2.0-flash שפותר את שגיאת ה-404
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 def get_full_article_text(url):
     try:
@@ -38,20 +38,14 @@ def get_full_article_text(url):
 
 def get_ai_summary(text):
     try:
-        # הוספת הגדרה לשימוש ב-API היציב
+        # הנחיה לסיכום
         prompt = f"סכם את הכתבה הבאה ב-3 עד 4 משפטים עבור אוהד הפועל פתח תקווה. הנה התוכן: {text[:5000]}"
-        # ניסיון הפעלה עם הגדרות בסיסיות
+        # הפעלה ישירה של המודל המעודכן
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         print(f"AI Error: {e}")
-        # אם יש שגיאה, ננסה מודל חלופי נפוץ
-        try:
-            alt_model = genai.GenerativeModel('gemini-pro')
-            response = alt_model.generate_content(prompt)
-            return response.text
-        except:
-            return None
+        return None
 
 def send_telegram_msg(text):
     try:
@@ -90,7 +84,7 @@ def main():
                     new_processed.append(title)
                     time.sleep(2)
 
-    # אתר רשמי
+    # בדיקת אתר רשמי
     try:
         url = "https://www.hapoelpt.com/news"
         resp = requests.get(url, timeout=10)
