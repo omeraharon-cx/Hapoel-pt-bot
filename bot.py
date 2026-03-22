@@ -4,12 +4,11 @@ from bs4 import BeautifulSoup
 import google.generativeai as genai
 import os
 
-# הגדרות אבטחה מה-Secrets
+# הגדרות
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "425605110"
 
-# רשימת המקורות לסריקה
 RSS_FEEDS = [
     "https://www.one.co.il/rss",
     "https://m.sport5.co.il/Rss.aspx",
@@ -18,24 +17,27 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# הגדרת מודל ה-AI
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 def get_full_article_text(url):
-    """שואב את כל פסקאות הטקסט מהכתבה כדי לבדוק מילות מפתח"""
     try:
-        response = requests.get(url, timeout=10)
+        headers = {'User-Agent': 'Mozilla/5.0'} # מתחזה לדפדפן כדי שלא יחסמו אותנו
+        response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
-        paragraphs = soup.find_all('p')
-        return " ".join([p.text for p in paragraphs])
+        
+        # מחפש טקסט ביותר מקומות (גם פסקאות וגם דיבים של תוכן)
+        text_blocks = soup.find_all(['p', 'div', 'h2'])
+        full_text = " ".join([t.text for t in text_blocks if len(t.text) > 20])
+        
+        # נירמול גרשיים: הופך את כל סוגי הגרשיים והצ'ופצ'יקים לתו אחד סטנדרטי
+        normalized_text = full_text.replace('״', '"').replace("'", '"').replace('"', '"')
+        return normalized_text
     except:
         return ""
 
 def get_ai_summary(text):
-    """שולח את הטקסט המלא ל-Gemini לקבלת תקציר ממוקד"""
     try:
-        # מגבילים את הטקסט הנשלח כדי לא לחרוג ממכסות (כ-4000 תווים ראשונים)
         prompt = f"סכם את הכתבה הבאה ב-3 עד 4 משפטים קצרים וממצים עבור אוהד הפועל פתח תקווה. הנה התוכן: {text[:4000]}"
         summary = model.generate_content(prompt)
         return summary.text
@@ -43,7 +45,6 @@ def get_ai_summary(text):
         return None
 
 def send_telegram_msg(text):
-    """שולח את ההודעה המעוצבת לטלגרם"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     requests.post(url, json=payload)
@@ -57,34 +58,31 @@ def main():
         history = f.read().splitlines()
 
     new_processed = []
-    # מילות המפתח המדויקות שביקשת
-    keywords = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פ\"ת", "הפועל פת", "מלאבס", "מלאבסים", "הכחולים"]
+    # רשימת מילים גמישה יותר (כולל כתיב חסר וסוגי גרשיים)
+    keywords = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "פ\"ת", "מלאבס", "הכחולים"]
 
     for feed_url in RSS_FEEDS:
-        print(f"סורק מקור: {feed_url}")
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             link = entry.link
             title = entry.title
             
-            # אם כבר טיפלנו בכתבה הזו בעבר - דלג
             if link in history or title in history:
                 continue
                 
-            # סריקת עומק: כניסה לכתבה ובדיקת הטקסט המלא
-            full_text = get_full_article_text(link)
+            content = get_full_article_text(link)
             
-            # בדיקה אם אחת ממילות המפתח מופיעה בכותרת או בתוכן
-            if any(key in title for key in keywords) or any(key in full_text for key in keywords):
-                print(f"נמצאה התאמה רלוונטית: {title}")
-                summary = get_ai_summary(full_text)
+            # בדיקה אם אחת המילים נמצאת בכותרת או בתוכן (אחרי נירמול)
+            title_norm = title.replace('״', '"').replace("'", '"')
+            if any(key in title_norm for key in keywords) or any(key in content for key in keywords):
+                summary = get_ai_summary(content)
                 if summary:
                     msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     send_telegram_msg(msg)
                     new_processed.append(link)
                     new_processed.append(title)
 
-    # סריקה מיוחדת לאתר הרשמי
+    # אתר רשמי
     try:
         url = "https://www.hapoelpt.com/news"
         resp = requests.get(url, timeout=10)
@@ -101,7 +99,6 @@ def main():
                         new_processed.append(full_url)
     except: pass
 
-    # שמירת היסטוריה כדי לא לשלוח שוב את אותן כתבות בריצה הבאה
     if new_processed:
         with open(db_file, 'a') as f:
             for item in new_processed:
