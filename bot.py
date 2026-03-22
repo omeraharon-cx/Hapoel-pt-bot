@@ -49,7 +49,6 @@ def send_telegram_msg(text):
     requests.post(url, json=payload)
 
 def main():
-    send_telegram_msg("הבוט התחבר בהצלחה עם המפתחות החדשים! 🚀")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
