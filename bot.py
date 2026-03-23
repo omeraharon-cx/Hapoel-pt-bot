@@ -40,10 +40,11 @@ def get_ai_summary(text):
             f"דגש קריטי: התייחס אך ורק להקשר של הפועל פתח תקווה. "
             f"הנה התוכן: {text[:5000]}"
         )
-        # הגדרות בטיחות מקלות כדי למנוע חסימות שווא על מילות ספורט כמו "הביסה"
+        # גרסה פשוטה ללא הגדרות מורכבות, לפעמים זה מה שגוגל צריכה בחיבורים מרחוק
         response = client.models.generate_content(
             model="gemini-1.5-flash", 
-            contents=prompt,
+            contents=prompt
+        )
             config={
                 'safety_settings': [
                     {'category': 'HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
