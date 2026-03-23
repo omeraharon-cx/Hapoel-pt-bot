@@ -25,34 +25,34 @@ def get_full_article_text(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         for s in soup(['script', 'style']): s.decompose()
         text_blocks = soup.find_all(['p', 'h2'])
-        return " ".join([t.text for t in text_blocks if len(t.text) > 30]).replace('״', '"').replace("'", '"')
+        return " ".join([t.text for t in text_blocks if len(t.text) > 30])
     except: return ""
 
 def get_ai_summary(text):
-    """פנייה ישירה ל-API של גוגל ללא ספריות חיצוניות - הכי יציב שיש"""
     if not text: return None
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
-        prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים ממצים וקצרים מהזווית של הפועל פתח תקווה בלבד: {text[:3000]}"
+        prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים ממצים מהזווית של הפועל פתח תקווה בלבד: {text[:2500]}"
         
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }]
-        }
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
         
         response = requests.post(url, headers=headers, json=payload, timeout=20)
         data = response.json()
         
-        # חילוץ הטקסט מהמבנה של גוגל
-        return data['candidates'][0]['content']['parts'][0]['text']
+        # הדפסה ללוג לצורך אבחון - זה יגלה לנו מה הבעיה
+        print(f"DEBUG AI RESPONSE: {json.dumps(data)}")
+        
+        if 'candidates' in data and data['candidates']:
+            return data['candidates'][0]['content']['parts'][0]['text']
+        else:
+            print(f"❌ AI Response missing candidates. Error info: {data.get('error', 'No error field')}")
+            return None
     except Exception as e:
-        print(f"❌ AI Error: {e}")
+        print(f"❌ AI System Error: {e}")
         return None
 
 def main():
-    print("🚀 סריקה התחילה...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -62,7 +62,6 @@ def main():
     hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
     new_found = 0
 
-    # סריקה
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
@@ -71,16 +70,13 @@ def main():
             
             content = get_full_article_text(link)
             is_official = "hapoelpt.com" in link
-            is_match = any(key in (title + " " + content).lower() for key in hapoel_keys)
-            
-            if is_match or is_official:
+            if is_official or any(key in (title + " " + content).lower() for key in hapoel_keys):
+                
                 summary = get_ai_summary(content)
                 
-                # עיצוב ההודעה לפי הבקשה שלך
+                # העיצוב שביקשת
                 summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪"
-                header = "**יש עדכון חדש על הפועל 💙**"
-                
-                msg = f"{header}\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
+                msg = f"**יש עדכון חדש על הפועל 💙**\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
                 
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                              json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
@@ -89,26 +85,7 @@ def main():
                 new_found += 1
                 time.sleep(5)
 
-    # בדיקה נוספת לאתר הרשמי ליתר ביטחון
-    try:
-        resp = requests.get("https://www.hapoelpt.com/news", timeout=10)
-        soup = BeautifulSoup(resp.content, 'html.parser')
-        for a in soup.find_all('a', href=True):
-            link = a['href']
-            if "/post/" in link or "/news/" in link:
-                full_url = link if link.startswith("http") else f"https://www.hapoelpt.com{link}"
-                if full_url not in history:
-                    content = get_full_article_text(full_url)
-                    summary = get_ai_summary(content)
-                    summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪"
-                    msg = f"**יש עדכון חדש על הפועל 💙**\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({full_url})"
-                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                                 json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-                    with open(db_file, 'a') as f: f.write(full_url + "\n")
-                    new_found += 1
-    except: pass
-
-    print(f"🏁 סיימתי. נמצאו {new_found} כתבות.")
+    print(f"🏁 סיום. נמצאו {new_found} כתבות.")
 
 if __name__ == "__main__":
     main()
