@@ -31,7 +31,8 @@ def get_full_article_text(url):
 def get_ai_summary(text):
     if not text: return None
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # התיקון הקריטי: v1 במקום v1beta
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים ממצים מהזווית של הפועל פתח תקווה בלבד: {text[:2500]}"
         
@@ -40,13 +41,10 @@ def get_ai_summary(text):
         response = requests.post(url, headers=headers, json=payload, timeout=20)
         data = response.json()
         
-        # הדפסה ללוג לצורך אבחון - זה יגלה לנו מה הבעיה
-        print(f"DEBUG AI RESPONSE: {json.dumps(data)}")
-        
         if 'candidates' in data and data['candidates']:
             return data['candidates'][0]['content']['parts'][0]['text']
         else:
-            print(f"❌ AI Response missing candidates. Error info: {data.get('error', 'No error field')}")
+            print(f"❌ AI Response error: {data}")
             return None
     except Exception as e:
         print(f"❌ AI System Error: {e}")
@@ -74,7 +72,7 @@ def main():
                 
                 summary = get_ai_summary(content)
                 
-                # העיצוב שביקשת
+                # העיצוב המדויק שביקשת
                 summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪"
                 msg = f"**יש עדכון חדש על הפועל 💙**\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
                 
