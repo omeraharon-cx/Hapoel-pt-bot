@@ -1,7 +1,7 @@
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+from google import genai # הספרייה החדשה של 2026
 import os
 import time
 
@@ -18,8 +18,8 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# אתחול הלקוח החדש של גוגל
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_full_article_text(url):
     try:
@@ -34,17 +34,19 @@ def get_full_article_text(url):
 def get_ai_summary(text):
     if not text: return None
     try:
-        # הנחיה סופר-ממוקדת: רק הפועל פתח תקווה
         prompt = (
             f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים. "
             f"דגש קריטי: התייחס אך ורק להקשר של הפועל פתח תקווה. "
-            f"אם הכתבה מזכירה קבוצות אחרות, התעלם מהן והתמקד במידע שרלוונטי לכחולים מפתח תקווה. "
             f"הנה התוכן: {text[:5000]}"
         )
-        response = model.generate_content(prompt)
+        # פקודת יצירת התוכן החדשה ל-2026
+        response = client.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=prompt
+        )
         return response.text
     except Exception as e:
-        print(f"AI Quota Issue: {e}")
+        print(f"AI Error: {e}")
         return None
 
 def send_telegram_msg(text):
@@ -62,8 +64,6 @@ def main():
         history = f.read().splitlines()
 
     new_processed = []
-    
-    # מילות מפתח מדויקות (הוספתי את המילה 'הפועל' לכל רצף)
     hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
     maccabi_keys = ["מכבי פתח תקווה", "מכבי פתח תקוה", "מכבי פ\"ת", "מכבי פתח-תקווה"]
 
@@ -76,25 +76,22 @@ def main():
             content = get_full_article_text(link)
             full_text_to_check = (title + " " + content).lower()
             
-            # לוגיקת סינון: חייב להכיל מילת מפתח של הפועל
             is_hapoel = any(key in full_text_to_check for key in hapoel_keys)
-            # אם מכיל מכבי אבל לא מכיל הפועל - דלג
             is_maccabi_only = any(key in full_text_to_check for key in maccabi_keys) and not is_hapoel
             
             if is_hapoel and not is_maccabi_only:
                 summary = get_ai_summary(content)
-                
                 if summary:
                     msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                 else:
-                    msg = f"⚽ *כתבה חדשה (ה-AI בעומס)*\n\n_{title}_\n\n🔗 [לחצו לקריאה המלאה]({link})"
+                    msg = f"⚽ *כתבה חדשה (ה-AI בעומס)*\n\n_{title}_\n\n🔗 [לחצו לקריאה]({link})"
                 
                 send_telegram_msg(msg)
                 new_processed.append(link)
                 new_processed.append(title)
-                time.sleep(15) # המתנה כדי לא לעצבן את גוגל
+                time.sleep(10)
 
-    # אתר רשמי - תמיד רלוונטי
+    # אתר רשמי
     try:
         resp = requests.get("https://www.hapoelpt.com/news", timeout=10)
         soup = BeautifulSoup(resp.content, 'html.parser')
