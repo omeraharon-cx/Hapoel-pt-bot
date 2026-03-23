@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import time
-from google import genai
+import json
 
 # הגדרות
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -18,9 +18,6 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# אתחול הלקוח (SDK 2026)
-client = genai.Client(api_key=GEMINI_API_KEY)
-
 def get_full_article_text(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -31,23 +28,49 @@ def get_full_article_text(url):
         return " ".join([t.text for t in text_blocks if len(t.text) > 30])
     except: return ""
 
-def get_ai_summary(text):
-    if not text or len(text) < 150: return None
+def find_working_model():
+    """פונקציה ששואלת את גוגל איזה מודלים פתוחים לשימוש"""
     try:
-        # חזרה למודל 1.5 פלאש - המכסה שלו הרבה יותר פתוחה למשתמשי חינם
-        prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:3000]}"
-        
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt
-        )
-        return response.text
-    except Exception as e:
-        print(f"❌ שגיאת AI: {e}")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        response = requests.get(url)
+        data = response.json()
+        if 'models' in data:
+            # מחפשים מודל שיש לו 'flash' בשם והוא תומך ביצירת תוכן
+            for m in data['models']:
+                if 'generateContent' in m['supportedGenerationMethods']:
+                    if '1.5-flash' in m['name'] or '2.0-flash' in m['name']:
+                        print(f"✅ נמצא מודל תקין: {m['name']}")
+                        return m['name']
+            return data['models'][0]['name'] # ברירת מחדל - המודל הראשון ברשימה
+    except:
+        return "models/gemini-1.5-flash"
+
+def get_ai_summary(text, model_name):
+    if not text or len(text) < 150: return None
+    
+    # שימוש ב-v1beta כי הוא הכי גמיש
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={GEMINI_API_KEY}"
+    headers = {'Content-Type': 'application/json'}
+    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:2500]}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=20)
+        data = response.json()
+        if response.status_code == 200 and 'candidates' in data:
+            return data['candidates'][0]['content']['parts'][0]['text']
+        else:
+            print(f"❌ שגיאה במודל {model_name}: {data.get('error', {}).get('message', 'Unknown')}")
+            return None
+    except:
         return None
 
 def main():
-    print("🚀 סריקה התחילה (Gemini 1.5 Flash)...")
+    print("🚀 סריקה התחילה (מצב סריקת מודלים)...")
+    
+    # שלב 1: מציאת המודל שעובד אצלך כרגע
+    active_model = find_working_model()
+    
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -65,8 +88,8 @@ def main():
             
             content = get_full_article_text(link)
             if any(key in (title + " " + content).lower() for key in hapoel_keys) or "hapoelpt.com" in link:
-                print(f"🎯 נמצאה כתבה: {title}")
-                summary = get_ai_summary(content)
+                print(f"🎯 מעבד כתבה: {title}")
+                summary = get_ai_summary(content, active_model)
                 
                 header = "**יש עדכון חדש על הפועל 💙**"
                 summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪️"
