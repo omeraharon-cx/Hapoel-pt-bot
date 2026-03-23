@@ -19,7 +19,7 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# אתחול ה-AI (שימוש ב-1.5-flash ליציבות)
+# אתחול ה-AI
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_full_article_text(url):
@@ -61,7 +61,7 @@ def main():
     hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
 
     for feed_url in RSS_FEEDS:
-        print(f"🔎 סורק מקור: {feed_url}")
+        print(f"🔎 סורק: {feed_url}")
         feed = feedparser.parse(feed_url)
         
         for entry in feed.entries:
@@ -72,4 +72,42 @@ def main():
             content = get_full_article_text(link)
             full_text = (title + " " + content).lower()
             
-            if any
+            # הבדיקה שגרמה לשגיאה קודם - עכשיו היא תקינה:
+            if any(key in full_text for key in hapoel_keys):
+                print(f"🎯 נמצאה התאמה: {title}")
+                new_found += 1
+                summary = get_ai_summary(content)
+                
+                # ההודעה המעודכנת עם הלבבות והעידוד:
+                summary_text = summary if summary else "💙 ללא תקציר הכתבה - יאלה הפועל 🔵⚪"
+                
+                msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary_text}\n\n🔗 [לכתבה המלאה]({link})"
+                
+                # שליחה לטלגרם
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                             json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+                
+                # שמירה לזיכרון
+                with open(db_file, 'a') as f:
+                    f.write(link + "\n" + title + "\n")
+                time.sleep(10)
+
+    # בדיקת אתר רשמי
+    try:
+        resp = requests.get("https://www.hapoelpt.com/news", timeout=10)
+        soup = BeautifulSoup(resp.content, 'html.parser')
+        for a in soup.find_all('a', href=True):
+            link = a['href']
+            if "/news/" in link:
+                full_url = link if link.startswith("http") else f"https://www.hapoelpt.com{link}"
+                if full_url not in history:
+                    new_found += 1
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                                 json={"chat_id": CHAT_ID, "text": f"🔵 *חדשות מהאתר הרשמי*\n\n🔗 [לכתבה המלאה]({full_url})", "parse_mode": "Markdown"})
+                    with open(db_file, 'a') as f: f.write(full_url + "\n")
+    except: pass
+
+    print(f"🏁 סיום. נמצאו {new_found} כתבות חדשות.")
+
+if __name__ == "__main__":
+    main()
