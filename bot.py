@@ -5,7 +5,7 @@ import os
 import time
 import json
 
-# הגדרות (Secrets של GitHub)
+# הגדרות
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "425605110"
@@ -31,33 +31,42 @@ def get_full_article_text(url):
 def get_ai_summary(text):
     if not text: return None
     
-    # מנסים את המודלים הכי עדכניים ל-2026
-    model_names = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest"]
+    # רשימת ניסיונות: (גרסת API, שם מודל)
+    # אנחנו מוסיפים v1beta כי הלוג הראה ש-v1 נכשל ב-404
+    attempts = [
+        ("v1beta", "gemini-1.5-flash"),
+        ("v1beta", "gemini-1.5-flash-latest"),
+        ("v1", "gemini-1.5-flash"),
+        ("v1", "gemini-pro")
+    ]
+    
     prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה: {text[:2500]}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {'Content-Type': 'application/json'}
 
-    for model in model_names:
+    for ver, model in attempts:
         try:
-            # שימוש ב-v1 (יציב) והעברת המפתח ב-URL
-            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={GEMINI_API_KEY}"
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            url = f"https://generativelanguage.googleapis.com/{ver}/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            response = requests.post(url, headers=headers, json=payload, timeout=12)
             data = response.json()
             
             if response.status_code == 200:
                 if 'candidates' in data and data['candidates']:
                     return data['candidates'][0]['content']['parts'][0]['text']
-            else:
-                # הדפסה קריטית לדיאגנוסטיקה
-                print(f"⚠️ ניסיון עם {model} נכשל. קוד: {response.status_code}, הודעה: {data.get('error', {}).get('message', 'No message')}")
+            
+            # אם קיבלנו 429 (מכסה), נחכה שנייה וננסה את המודל הבא
+            if response.status_code == 429:
+                print(f"⏳ מכסה מלאה ל-{model}, עובר למודל הבא...")
+                time.sleep(1)
+                
         except Exception as e:
-            print(f"⚠️ שגיאת התחברות למודל {model}: {e}")
+            print(f"⚠️ שגיאה זמנית ב-{model}: {e}")
             continue
             
     return None
 
 def main():
-    print("🚀 מתחיל סריקה (גרסת 2026)...")
+    print("🚀 מתחיל סריקה סופית (גרסה חסינה)...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -77,7 +86,7 @@ def main():
             is_official = "hapoelpt.com" in link
             if is_official or any(key in (title + " " + content).lower() for key in hapoel_keys):
                 
-                print(f"🎯 מעבד כתבה: {title}")
+                print(f"🎯 מצאתי כתבה: {title}")
                 summary = get_ai_summary(content)
                 
                 header = "**יש עדכון חדש על הפועל 💙**"
@@ -91,7 +100,7 @@ def main():
                 
                 with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                 new_found += 1
-                time.sleep(5)
+                time.sleep(5) # המתנה בין שליחה לשליחה
 
     print(f"🏁 סיום. נמצאו {new_found} כתבות.")
 
