@@ -5,7 +5,7 @@ import os
 import time
 import json
 
-# הגדרות
+# הגדרות (Secrets של GitHub)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "425605110"
@@ -30,30 +30,37 @@ def get_full_article_text(url):
 
 def get_ai_summary(text):
     if not text: return None
-    # ניסיון בגרסה היציבה ביותר כיום
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
     
+    # בשנת 2026, אנחנו מנסים קודם את הגרסה היציבה (v1) ואז את הבטא (v1beta)
+    # אנחנו גם מנסים את השמות הכי נפוצים של המודל
+    api_versions = ["v1", "v1beta"]
+    model_names = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-2.0-flash-exp"]
+    
+    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה: {text[:2500]}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {
         'Content-Type': 'application/json',
-        'x-goog-api-key': GEMINI_API_KEY  # העברת המפתח בצורה יציבה יותר
+        'x-goog-api-key': GEMINI_API_KEY
     }
-    
-    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה: {text[:2000]}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        data = response.json()
-        
-        if response.status_code == 200 and 'candidates' in data:
-            return data['candidates'][0]['content']['parts'][0]['text']
-        else:
-            # הדפסת השגיאה האמיתית ללוג לדיאגנוסטיקה
-            print(f"❌ AI Error {response.status_code}: {data.get('error', {}).get('message', 'Unknown error')}")
-            return None
-    except Exception as e:
-        print(f"❌ Connection Error: {e}")
-        return None
+    for ver in api_versions:
+        for model in model_names:
+            try:
+                url = f"https://generativelanguage.googleapis.com/{ver}/models/{model}:generateContent"
+                response = requests.post(url, headers=headers, json=payload, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'candidates' in data:
+                        return data['candidates'][0]['content']['parts'][0]['text']
+                
+                # אם קיבלנו 404, פשוט נמשיך למודל הבא ברשימה
+                continue
+            except:
+                continue
+    
+    print("❌ כל ניסיונות ה-AI נכשלו (404/Auth/Quota)")
+    return None
 
 def main():
     print("🚀 מתחיל סריקה...")
@@ -79,13 +86,15 @@ def main():
                 print(f"🎯 מעבד כתבה: {title}")
                 summary = get_ai_summary(content)
                 
-                # העיצוב המדויק שביקשת
+                # עיצוב ההודעה בדיוק כפי שביקשת (הכותרת בבולד)
                 header = "**יש עדכון חדש על הפועל 💙**"
+                
                 if summary:
                     msg = f"{header}\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                 else:
                     msg = f"{header}\n\nהכתבה ללא תקציר 🔵⚪️\n\n🔗 [לכתבה המלאה]({link})"
                 
+                # שליחה לטלגרם
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                              json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
                 
