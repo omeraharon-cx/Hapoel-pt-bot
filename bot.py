@@ -1,7 +1,7 @@
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from google import genai # הספרייה המעודכנת ל-2026
+from google import genai # הספרייה החדשה של 2026
 import os
 import time
 
@@ -65,7 +65,7 @@ def main():
 
     new_processed = []
     
-    # הגדרת מילות מפתח
+    # מילות מפתח לחיפוש
     hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
 
     for feed_url in RSS_FEEDS:
