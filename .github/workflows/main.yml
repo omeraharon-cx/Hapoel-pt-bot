@@ -31,8 +31,11 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          # קודם כל מוסיפים את הקובץ ששונה
           git add seen_links.txt
-          # משיכת שינויים מהשרת לפני השמירה כדי למנוע קונפליקטים
-          git pull --rebase origin main
+          # עושים קומיט מקומי (אם אין שינויים, הוא פשוט ימשיך הלאה)
           git commit -m "Update history" || echo "No changes to commit"
+          # עכשיו מושכים עדכונים מהשרת בזהירות
+          git pull --rebase origin main
+          # ובסוף דוחפים הכל חזרה
           git push origin main
