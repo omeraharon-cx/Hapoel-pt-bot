@@ -5,20 +5,21 @@ from google import genai
 import os
 import time
 
-# הגדרות (נלקח מה-Secrets של גיטהאב)
+# הגדרות (Secrets של GitHub)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "425605110"
 
+# רשימת מקורות
 RSS_FEEDS = [
-    "https://www.one.co.il/rss",
-    "https://www.sport5.co.il/Rss.aspx",
+    "https://www.one.co.il/cat/rss/",
+    "https://www.sport5.co.il/RSS.aspx",
     "https://www.ynet.co.il/Integration/StoryRss1854.xml",
     "https://rss.walla.co.il/feed/3",
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# אתחול ה-AI בגרסה החדשה של 2026
+# אתחול ה-AI (שימוש ב-1.5-flash ליציבות)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_full_article_text(url):
@@ -39,14 +40,17 @@ def get_ai_summary(text):
             f"דגש קריטי: התייחס אך ורק להקשר של הפועל פתח תקווה. "
             f"הנה התוכן: {text[:5000]}"
         )
-        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash", 
+            contents=prompt
+        )
         return response.text
     except Exception as e:
         print(f"❌ AI Error: {e}")
         return None
 
 def main():
-    print("🚀 מתחיל סריקת כתבות יומית...")
+    print("🚀 מתחיל סריקת כתבות...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -65,48 +69,7 @@ def main():
             if link in history or title in history:
                 continue
             
-            # בדיקת תוכן עמוקה
             content = get_full_article_text(link)
             full_text = (title + " " + content).lower()
             
-            if any(key in full_text for key in hapoel_keys):
-                print(f"🎯 נמצאה התאמה! כתבה: {title}")
-                new_found += 1
-                summary = get_ai_summary(content)
-                
-                msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary if summary else 'AI בעומס'}\n\n🔗 [לכתבה המלאה]({link})"
-                
-                # שליחה לטלגרם
-                url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-                
-                # שמירה לזיכרון
-                with open(db_file, 'a') as f:
-                    f.write(link + "\n" + title + "\n")
-                time.sleep(10)
-
-    # בדיקת אתר רשמי
-    print("🌐 בודק עדכונים מהאתר הרשמי של הפועל...")
-    try:
-        resp = requests.get("https://www.hapoelpt.com/news", timeout=10)
-        soup = BeautifulSoup(resp.content, 'html.parser')
-        for a in soup.find_all('a', href=True):
-            link = a['href']
-            if "/news/" in link:
-                full_url = link if link.startswith("http") else f"https://www.hapoelpt.com{link}"
-                if full_url not in history:
-                    print(f"🎯 ידיעה חדשה מהאתר הרשמי: {full_url}")
-                    new_found += 1
-                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                                 json={"chat_id": CHAT_ID, "text": f"🔵 *חדשות מהאתר הרשמי*\n\n🔗 [לכתבה המלאה]({full_url})", "parse_mode": "Markdown"})
-                    with open(db_file, 'a') as f: f.write(full_url + "\n")
-    except: pass
-
-    # סיכום ללוג
-    if new_found == 0:
-        print("🏁 סריקה הושלמה: לא נמצאו כתבות חדשות על הפועל פתח תקווה.")
-    else:
-        print(f"🏁 סריקה הושלמה: נמצאו {new_found} כתבות חדשות ועדכונים נשלחו.")
-
-if __name__ == "__main__":
-    main()
+            if any
