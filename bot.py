@@ -18,7 +18,7 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# אתחול הלקוח החדש (גרסת 2026)
+# אתחול הלקוח (SDK 2026)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_full_article_text(url):
@@ -34,20 +34,20 @@ def get_full_article_text(url):
 def get_ai_summary(text):
     if not text or len(text) < 150: return None
     try:
-        # שימוש במודל 2.0 פלאש - הכי מהיר ויציב כרגע
+        # חזרה למודל 1.5 פלאש - המכסה שלו הרבה יותר פתוחה למשתמשי חינם
         prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:3000]}"
         
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-1.5-flash',
             contents=prompt
         )
         return response.text
     except Exception as e:
-        print(f"❌ שגיאה ב-SDK החדש: {e}")
+        print(f"❌ שגיאת AI: {e}")
         return None
 
 def main():
-    print("🚀 סריקה התחילה (גרסת SDK 2026)...")
+    print("🚀 סריקה התחילה (Gemini 1.5 Flash)...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
