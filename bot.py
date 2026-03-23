@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import time
-import google.generativeai as genai
+from google import genai
 
 # הגדרות
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -18,8 +18,8 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# אתחול ה-AI בשיטה הרשמית
-genai.configure(api_key=GEMINI_API_KEY)
+# אתחול הלקוח החדש (גרסת 2026)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_full_article_text(url):
     try:
@@ -33,38 +33,21 @@ def get_full_article_text(url):
 
 def get_ai_summary(text):
     if not text or len(text) < 150: return None
-    
-    # ניסיון להשתמש במודל הפלאש היציב ביותר ל-2026
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = (
-            f"סכם את הכתבה הבאה ב-3 משפטים קצרים וקולעים. "
-            f"התמקד אך ורק בזווית של הפועל פתח תקווה. "
-            f"הנה התוכן: {text[:3000]}"
+        # שימוש במודל 2.0 פלאש - הכי מהיר ויציב כרגע
+        prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:3000]}"
+        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt
         )
-        
-        # הגדרות בטיחות מקלות כדי למנוע חסימות שווא
-        safety = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-        
-        response = model.generate_content(prompt, safety_settings=safety)
         return response.text
     except Exception as e:
-        print(f"❌ שגיאת AI רשמית: {e}")
-        # אם המודל לא נמצא, ננסה את מודל הפרו כגיבוי אחרון
-        try:
-            model_pro = genai.GenerativeModel('gemini-pro')
-            response = model_pro.generate_content(prompt)
-            return response.text
-        except:
-            return None
+        print(f"❌ שגיאה ב-SDK החדש: {e}")
+        return None
 
 def main():
-    print("🚀 סריקה התחילה (גרסת הספרייה הרשמית)...")
+    print("🚀 סריקה התחילה (גרסת SDK 2026)...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -82,7 +65,7 @@ def main():
             
             content = get_full_article_text(link)
             if any(key in (title + " " + content).lower() for key in hapoel_keys) or "hapoelpt.com" in link:
-                print(f"🎯 מצאתי: {title}")
+                print(f"🎯 נמצאה כתבה: {title}")
                 summary = get_ai_summary(content)
                 
                 header = "**יש עדכון חדש על הפועל 💙**"
