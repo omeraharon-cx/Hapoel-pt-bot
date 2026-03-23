@@ -31,39 +31,33 @@ def get_full_article_text(url):
 def get_ai_summary(text):
     if not text: return None
     
-    # בשנת 2026, אנחנו מנסים קודם את הגרסה היציבה (v1) ואז את הבטא (v1beta)
-    # אנחנו גם מנסים את השמות הכי נפוצים של המודל
-    api_versions = ["v1", "v1beta"]
-    model_names = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-2.0-flash-exp"]
-    
+    # מנסים את המודלים הכי עדכניים ל-2026
+    model_names = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest"]
     prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה: {text[:2500]}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    headers = {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': GEMINI_API_KEY
-    }
+    headers = {'Content-Type': 'application/json'}
 
-    for ver in api_versions:
-        for model in model_names:
-            try:
-                url = f"https://generativelanguage.googleapis.com/{ver}/models/{model}:generateContent"
-                response = requests.post(url, headers=headers, json=payload, timeout=10)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if 'candidates' in data:
-                        return data['candidates'][0]['content']['parts'][0]['text']
-                
-                # אם קיבלנו 404, פשוט נמשיך למודל הבא ברשימה
-                continue
-            except:
-                continue
-    
-    print("❌ כל ניסיונות ה-AI נכשלו (404/Auth/Quota)")
+    for model in model_names:
+        try:
+            # שימוש ב-v1 (יציב) והעברת המפתח ב-URL
+            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            data = response.json()
+            
+            if response.status_code == 200:
+                if 'candidates' in data and data['candidates']:
+                    return data['candidates'][0]['content']['parts'][0]['text']
+            else:
+                # הדפסה קריטית לדיאגנוסטיקה
+                print(f"⚠️ ניסיון עם {model} נכשל. קוד: {response.status_code}, הודעה: {data.get('error', {}).get('message', 'No message')}")
+        except Exception as e:
+            print(f"⚠️ שגיאת התחברות למודל {model}: {e}")
+            continue
+            
     return None
 
 def main():
-    print("🚀 מתחיל סריקה...")
+    print("🚀 מתחיל סריקה (גרסת 2026)...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -86,15 +80,12 @@ def main():
                 print(f"🎯 מעבד כתבה: {title}")
                 summary = get_ai_summary(content)
                 
-                # עיצוב ההודעה בדיוק כפי שביקשת (הכותרת בבולד)
                 header = "**יש עדכון חדש על הפועל 💙**"
-                
                 if summary:
                     msg = f"{header}\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                 else:
                     msg = f"{header}\n\nהכתבה ללא תקציר 🔵⚪️\n\n🔗 [לכתבה המלאה]({link})"
                 
-                # שליחה לטלגרם
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                              json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
                 
