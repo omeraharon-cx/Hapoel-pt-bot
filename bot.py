@@ -1,7 +1,7 @@
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from google import genai # הספרייה החדשה של 2026
+from google import genai # הספרייה המעודכנת ל-2026
 import os
 import time
 
@@ -18,7 +18,7 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# אתחול הלקוח החדש של גוגל
+# אתחול ה-AI בגרסה החדשה
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_full_article_text(url):
@@ -35,11 +35,11 @@ def get_ai_summary(text):
     if not text: return None
     try:
         prompt = (
-            f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים. "
+            f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים ממצים. "
             f"דגש קריטי: התייחס אך ורק להקשר של הפועל פתח תקווה. "
+            f"אם מדובר בדרבי או משחק נגד מכבי פתח תקווה, הדגש את הזווית של הפועל, השחקנים שלה וההשלכות עבורה. "
             f"הנה התוכן: {text[:5000]}"
         )
-        # פקודת יצירת התוכן החדשה ל-2026
         response = client.models.generate_content(
             model="gemini-2.0-flash", 
             contents=prompt
@@ -64,8 +64,9 @@ def main():
         history = f.read().splitlines()
 
     new_processed = []
+    
+    # הגדרת מילות מפתח
     hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
-    maccabi_keys = ["מכבי פתח תקווה", "מכבי פתח תקוה", "מכבי פ\"ת", "מכבי פתח-תקווה"]
 
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
@@ -76,20 +77,20 @@ def main():
             content = get_full_article_text(link)
             full_text_to_check = (title + " " + content).lower()
             
-            is_hapoel = any(key in full_text_to_check for key in hapoel_keys)
-            is_maccabi_only = any(key in full_text_to_check for key in maccabi_keys) and not is_hapoel
+            # הלוגיקה החדשה: אם הפועל מוזכרת, אנחנו לוקחים את הכתבה (גם אם מכבי שם)
+            has_hapoel = any(key in full_text_to_check for key in hapoel_keys)
             
-            if is_hapoel and not is_maccabi_only:
+            if has_hapoel:
                 summary = get_ai_summary(content)
                 if summary:
                     msg = f"⚽ *עדכון הפועל פתח תקווה*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                 else:
-                    msg = f"⚽ *כתבה חדשה (ה-AI בעומס)*\n\n_{title}_\n\n🔗 [לחצו לקריאה]({link})"
+                    msg = f"⚽ *כתבה חדשה (ה-AI בעומס)*\n\n_{title}_\n\n🔗 [לחצו לקריאה המלאה]({link})"
                 
                 send_telegram_msg(msg)
                 new_processed.append(link)
                 new_processed.append(title)
-                time.sleep(10)
+                time.sleep(15)
 
     # אתר רשמי
     try:
