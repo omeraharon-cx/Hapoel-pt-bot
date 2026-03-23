@@ -30,28 +30,33 @@ def get_full_article_text(url):
 
 def get_ai_summary(text):
     if not text: return None
-    # רשימת מודלים אפשריים - הבוט ינסה אחד אחד עד שיצליח
-    models_to_try = ["gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro"]
+    # ניסיון בגרסה היציבה ביותר כיום
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
     
-    for model_name in models_to_try:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-            headers = {'Content-Type': 'application/json'}
-            prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים ממצים וקצרים מהזווית של הפועל פתח תקווה בלבד: {text[:2500]}"
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            
-            response = requests.post(url, headers=headers, json=payload, timeout=20)
-            data = response.json()
-            
-            if 'candidates' in data and data['candidates']:
-                return data['candidates'][0]['content']['parts'][0]['text']
-            print(f"⚠️ מודל {model_name} לא הניב תוצאה, מנסה את הבא...")
-        except:
-            continue
-    return None
+    headers = {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': GEMINI_API_KEY  # העברת המפתח בצורה יציבה יותר
+    }
+    
+    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה: {text[:2000]}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        data = response.json()
+        
+        if response.status_code == 200 and 'candidates' in data:
+            return data['candidates'][0]['content']['parts'][0]['text']
+        else:
+            # הדפסת השגיאה האמיתית ללוג לדיאגנוסטיקה
+            print(f"❌ AI Error {response.status_code}: {data.get('error', {}).get('message', 'Unknown error')}")
+            return None
+    except Exception as e:
+        print(f"❌ Connection Error: {e}")
+        return None
 
 def main():
-    print("🚀 סריקה התחילה...")
+    print("🚀 מתחיל סריקה...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -71,13 +76,15 @@ def main():
             is_official = "hapoelpt.com" in link
             if is_official or any(key in (title + " " + content).lower() for key in hapoel_keys):
                 
+                print(f"🎯 מעבד כתבה: {title}")
                 summary = get_ai_summary(content)
                 
-                # העיצוב החדש והמדויק שביקשת
+                # העיצוב המדויק שביקשת
+                header = "**יש עדכון חדש על הפועל 💙**"
                 if summary:
-                    msg = f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
+                    msg = f"{header}\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                 else:
-                    msg = f"**יש עדכון חדש על הפועל 💙**\n\nהכתבה ללא תקציר 🔵⚪️\n\n🔗 [לכתבה המלאה]({link})"
+                    msg = f"{header}\n\nהכתבה ללא תקציר 🔵⚪️\n\n🔗 [לכתבה המלאה]({link})"
                 
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                              json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
@@ -86,7 +93,7 @@ def main():
                 new_found += 1
                 time.sleep(5)
 
-    print(f"🏁 סיימתי. נמצאו {new_found} כתבות.")
+    print(f"🏁 סיום. נמצאו {new_found} כתבות.")
 
 if __name__ == "__main__":
     main()
