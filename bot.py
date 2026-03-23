@@ -25,48 +25,43 @@ def get_full_article_text(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         for s in soup(['script', 'style']): s.decompose()
         text_blocks = soup.find_all(['p', 'h2'])
-        return " ".join([t.text for t in text_blocks if len(t.text) > 30])
-    except: return ""
+        text = " ".join([t.text for t in text_blocks if len(t.text) > 30])
+        print(f"📄 אורך הטקסט שנשאב מהכתבה: {len(text)} תווים")
+        return text
+    except Exception as e:
+        print(f"⚠️ שגיאה בשאיבת תוכן הכתבה: {e}")
+        return ""
 
 def get_ai_summary(text):
-    if not text: return None
+    if not text or len(text) < 100:
+        print("🛑 הטקסט קצר מדי או ריק, לא שולח ל-AI")
+        return None
     
-    # רשימת ניסיונות: (גרסת API, שם מודל)
-    # אנחנו מוסיפים v1beta כי הלוג הראה ש-v1 נכשל ב-404
-    attempts = [
-        ("v1beta", "gemini-1.5-flash"),
-        ("v1beta", "gemini-1.5-flash-latest"),
-        ("v1", "gemini-1.5-flash"),
-        ("v1", "gemini-pro")
-    ]
-    
-    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה: {text[:2500]}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    # ניסיון בודד וממוקד עם המודל הכי יציב
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
+    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם ב-3 משפטים מהזווית של הפועל פתח תקווה בלבד: {text[:3000]}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    for ver, model in attempts:
-        try:
-            url = f"https://generativelanguage.googleapis.com/{ver}/models/{model}:generateContent?key={GEMINI_API_KEY}"
-            response = requests.post(url, headers=headers, json=payload, timeout=12)
-            data = response.json()
-            
-            if response.status_code == 200:
-                if 'candidates' in data and data['candidates']:
-                    return data['candidates'][0]['content']['parts'][0]['text']
-            
-            # אם קיבלנו 429 (מכסה), נחכה שנייה וננסה את המודל הבא
-            if response.status_code == 429:
-                print(f"⏳ מכסה מלאה ל-{model}, עובר למודל הבא...")
-                time.sleep(1)
-                
-        except Exception as e:
-            print(f"⚠️ שגיאה זמנית ב-{model}: {e}")
-            continue
-            
-    return None
+    try:
+        print(f"🤖 פונה ל-AI לסיום סיכום...")
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        data = response.json()
+        
+        if response.status_code == 200:
+            if 'candidates' in data and data['candidates']:
+                summary = data['candidates'][0]['content']['parts'][0]['text']
+                print("✅ תקציר הופק בהצלחה!")
+                return summary
+        
+        print(f"❌ שגיאת AI (קוד {response.status_code}): {data}")
+        return None
+    except Exception as e:
+        print(f"❌ תקלה חמורה בפנייה ל-AI: {e}")
+        return None
 
 def main():
-    print("🚀 מתחיל סריקה סופית (גרסה חסינה)...")
+    print("🚀 סריקה התחילה...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -83,24 +78,20 @@ def main():
             if link in history or title in history: continue
             
             content = get_full_article_text(link)
-            is_official = "hapoelpt.com" in link
-            if is_official or any(key in (title + " " + content).lower() for key in hapoel_keys):
-                
-                print(f"🎯 מצאתי כתבה: {title}")
+            if any(key in (title + " " + content).lower() for key in hapoel_keys) or "hapoelpt.com" in link:
+                print(f"🎯 מצאתי כתבה רלוונטית: {title}")
                 summary = get_ai_summary(content)
                 
                 header = "**יש עדכון חדש על הפועל 💙**"
-                if summary:
-                    msg = f"{header}\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
-                else:
-                    msg = f"{header}\n\nהכתבה ללא תקציר 🔵⚪️\n\n🔗 [לכתבה המלאה]({link})"
+                summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪️"
+                msg = f"{header}\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
                 
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                              json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
                 
                 with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                 new_found += 1
-                time.sleep(5) # המתנה בין שליחה לשליחה
+                time.sleep(3)
 
     print(f"🏁 סיום. נמצאו {new_found} כתבות.")
 
