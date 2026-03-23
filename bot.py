@@ -21,26 +21,13 @@ RSS_FEEDS = [
 def get_full_article_text(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-        # הגדלנו את ה-Timeout והוספנו ניסיון נוסף ל-ONE
-        response = requests.get(url, headers=headers, timeout=20)
+        # העלנו את ה-Timeout ל-30 שניות כדי לפתור את השגיאה מ-ONE
+        response = requests.get(url, headers=headers, timeout=30)
         soup = BeautifulSoup(response.content, 'html.parser')
         for s in soup(['script', 'style', 'nav', 'header', 'footer']): s.decompose()
-        
-        # מחפש טקסט ביותר מקומות (div, section, p)
-        content_selectors = ['div.article-body', 'section.article-content', 'div.content', 'article']
-        main_text = ""
-        for selector in content_selectors:
-            target = soup.select_one(selector)
-            if target:
-                main_text = target.get_text(separator=' ')
-                break
-        
-        if not main_text:
-            text_blocks = soup.find_all(['p', 'h2'])
-            main_text = " ".join([t.text for t in text_blocks if len(t.text) > 20])
-            
-        print(f"📄 אורך הטקסט שנשאב: {len(main_text)} תווים")
-        return main_text
+        text_blocks = soup.find_all(['p', 'h2'])
+        text = " ".join([t.text for t in text_blocks if len(t.text) > 30])
+        return text
     except Exception as e:
         print(f"⚠️ שגיאה בשאיבת תוכן: {e}")
         return ""
@@ -48,27 +35,33 @@ def get_full_article_text(url):
 def get_ai_summary(text):
     if not text or len(text) < 150: return None
     
-    # שימוש בגרסה v1 היציבה - הפתרון ל-404!
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # ב-2026, אנחנו מנסים את v1beta כי שם רוב המודלים החינמיים נמצאים
+    # אנחנו מנסים גם את flash וגם את pro כגיבוי
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
+    
     headers = {'Content-Type': 'application/json'}
-    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה הבאה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:3000]}"
+    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:2500]}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=20)
-        data = response.json()
-        
-        if response.status_code == 200 and 'candidates' in data:
-            return data['candidates'][0]['content']['parts'][0]['text']
-        else:
-            print(f"❌ שגיאת AI (קוד {response.status_code}): {data}")
-            return None
-    except Exception as e:
-        print(f"❌ תקלה בפנייה ל-AI: {e}")
-        return None
+    for model in models_to_try:
+        try:
+            # הכתובת הזו היא הכי יציבה ב-2026 עבור AI Studio
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
+            data = response.json()
+            
+            if response.status_code == 200:
+                if 'candidates' in data and data['candidates']:
+                    return data['candidates'][0]['content']['parts'][0]['text']
+            
+            print(f"DEBUG: מודל {model} החזיר שגיאה {response.status_code}")
+        except:
+            continue
+            
+    return None
 
 def main():
-    print("🚀 סריקה התחילה...")
+    print("🚀 סריקה התחילה (מצב אבחון)...")
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -86,14 +79,14 @@ def main():
             
             content = get_full_article_text(link)
             if any(key in (title + " " + content).lower() for key in hapoel_keys) or "hapoelpt.com" in link:
-                print(f"🎯 נמצאה כתבה: {title}")
+                print(f"🎯 מצאתי כתבה רלוונטית: {title}")
                 summary = get_ai_summary(content)
                 
-                # העיצוב המדויק שביקשת
                 header = "**יש עדכון חדש על הפועל 💙**"
                 summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪️"
                 msg = f"{header}\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
                 
+                # שליחה לטלגרם
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                              json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
                 
