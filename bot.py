@@ -20,21 +20,38 @@ RSS_FEEDS = [
 
 def get_full_article_text(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        # Header מפורט יותר כדי להיראות כמו דפדפן אמיתי
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+        }
+        
         response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code != 200:
+            print(f"⚠️ שגיאת HTTP {response.status_code} בכתבה: {url}")
+            return ""
+            
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # ניקוי זבל
-        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'iframe']): s.decompose()
+        # ניקוי אגרסיבי של רעש
+        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'button', 'form']): 
+            s.decompose()
         
-        # חיפוש טקסט בבלוקים נפוצים
-        text_blocks = soup.find_all(['p', 'h2', 'div.article-content', 'div.content'])
-        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
+        # חיפוש טקסט בכל פסקה או כותרת
+        content_tags = soup.find_all(['p', 'h1', 'h2', 'h3', 'div'])
+        lines = []
+        for tag in content_tags:
+            # לוקחים רק טקסט משמעותי (מעל 20 תווים) כדי לא לאסוף זבל
+            txt = tag.get_text().strip()
+            if len(txt) > 25 and txt not in lines:
+                lines.append(txt)
         
-        print(f"📄 נשאבו {len(full_text)} תווים מהכתבה.")
+        full_text = " ".join(lines)
+        print(f"📄 נשאבו {len(full_text)} תווים.")
         return full_text
     except Exception as e:
-        print(f"⚠️ שגיאה בשאיבת תוכן: {e}")
+        print(f"⚠️ תקלה בשאיבה: {e}")
         return ""
 
 def get_available_models():
@@ -50,43 +67,33 @@ def get_available_models():
 
 def get_ai_summary(text, models):
     if not text or len(text) < 150:
-        print(f"🛑 תקציר בוטל: הטקסט קצר מדי ({len(text)} תווים).")
         return None
     
-    # הפרומפט הענייני והאובייקטיבי שביקשת
+    # הנימה העניינית שביקשת
     prompt = (
-        f"סכם את הכתבה הבאה ב-3 משפטים קצרים בצורה עניינית, אובייקטיבית וברורה. "
-        f"התמקד בעובדות המרכזיות בלבד מהזווית של הפועל פתח תקווה. "
-        f"אל תשתמש בכינויי שייכות (כמו 'שלנו'), אל תהיה רגשי, והנגש את המידע לקריאה מהירה: {text[:2800]}"
+        f"סכם את הכתבה הבאה ב-3 משפטים קצרים בצורה עניינית ואובייקטיבית. "
+        f"התמקד בעובדות מהזווית של הפועל פתח תקווה. "
+        f"אל תשתמש במילים רגשיות או ביקורתיות. הנה הטקסט: {text[:3000]}"
     )
     
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {'Content-Type': 'application/json'}
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     for model_path in models:
         for version in ['v1', 'v1beta']:
             try:
                 url = f"https://generativelanguage.googleapis.com/{version}/{model_path}:generateContent?key={GEMINI_API_KEY}"
                 response = requests.post(url, headers=headers, json=payload, timeout=15)
-                data = response.json()
-                
                 if response.status_code == 200:
-                    if 'candidates' in data and data['candidates']:
-                        candidate = data['candidates'][0]
-                        # בדיקה אם גוגל חסמה את התשובה בגלל בטיחות
-                        if candidate.get('finishReason') == 'SAFETY':
-                            print(f"🛡️ גוגל חסמה את התקציר למודל {model_path} בגלל סיבות בטיחות.")
-                            continue
-                        return candidate['content']['parts'][0]['text']
-                elif response.status_code == 429:
-                    print(f"⏳ מכסה נגמרה למודל {model_path}, מנסה את הבא...")
+                    data = response.json()
+                    if 'candidates' in data:
+                        return data['candidates'][0]['content']['parts'][0]['text']
             except:
                 continue
-    print("❌ לא ניתן היה להפיק תקציר מאף מודל.")
     return None
 
 def main():
-    print("🚀 סריקה התחילה (גרסת דיאגנוסטיקה)...")
+    print("🚀 סריקה התחילה (גרסת שאיבה משופרת)...")
     models = get_available_models()
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
@@ -104,7 +111,10 @@ def main():
             if link in history or title in history: continue
             
             content = get_full_article_text(link)
-            if any(key in (title + " " + content).lower() for key in hapoel_keys) or "hapoelpt.com" in link:
+            # חיפוש מילות מפתח גם בכותרת וגם בתוכן שנשאב
+            search_area = (title + " " + content).lower()
+            
+            if any(key in search_area for key in hapoel_keys) or "hapoelpt.com" in link:
                 print(f"🎯 נמצאה כתבה: {title}")
                 summary = get_ai_summary(content, models)
                 
