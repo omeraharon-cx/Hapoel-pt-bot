@@ -28,33 +28,48 @@ def get_full_article_text(url):
         return " ".join([t.text for t in text_blocks if len(t.text) > 30])
     except: return ""
 
-def get_ai_summary(text):
+def get_available_models():
+    """שואל את גוגל אילו מודלים זמינים כרגע בחשבון"""
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        response = requests.get(url)
+        data = response.json()
+        models = [m['name'] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+        # נסדר אותם כך ש-1.5 פלאש יהיה ראשון (כי הוא הכי יציב בחינם)
+        models.sort(key=lambda x: '1.5-flash' not in x)
+        return models
+    except:
+        return ["models/gemini-1.5-flash", "models/gemini-pro"]
+
+def get_ai_summary(text, models):
     if not text or len(text) < 150: return None
     
-    # ב-2026, השם המדויק והיציב ביותר ב-v1beta הוא זה:
-    model_name = "models/gemini-1.5-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={GEMINI_API_KEY}"
-    
-    headers = {'Content-Type': 'application/json'}
     prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:2500]}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    headers = {'Content-Type': 'application/json'}
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=20)
-        data = response.json()
-        
-        if response.status_code == 200 and 'candidates' in data:
-            return data['candidates'][0]['content']['parts'][0]['text']
-        else:
-            # אם יש שגיאת מכסה (429), נדפיס אותה ברור
-            error_msg = data.get('error', {}).get('message', 'Unknown Error')
-            print(f"⚠️ שגיאה במודל: {error_msg}")
-            return None
-    except:
-        return None
+    # מנסה כל מודל שגוגל אמרה לנו שקיים
+    for model_path in models:
+        for version in ['v1', 'v1beta']:
+            try:
+                url = f"https://generativelanguage.googleapis.com/{version}/{model_path}:generateContent?key={GEMINI_API_KEY}"
+                response = requests.post(url, headers=headers, json=payload, timeout=15)
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'candidates' in data:
+                        return data['candidates'][0]['content']['parts'][0]['text']
+                elif response.status_code == 429:
+                    print(f"⏳ מודל {model_path} בעומס (מכסה נגמרה), מנסה את הבא...")
+            except:
+                continue
+    return None
 
 def main():
-    print("🚀 סריקה התחילה (Gemini 1.5 Flash - הגרסה היציבה)...")
+    print("🚀 סריקה התחילה (מצב סריקה חכמה)...")
+    
+    # שלב 1: מציאת רשימת המודלים שבאמת קיימים עבורך
+    models = get_available_models()
+    print(f"📋 נמצאו {len(models)} מודלים פוטנציאליים.")
     
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
@@ -74,7 +89,7 @@ def main():
             content = get_full_article_text(link)
             if any(key in (title + " " + content).lower() for key in hapoel_keys) or "hapoelpt.com" in link:
                 print(f"🎯 נמצאה כתבה: {title}")
-                summary = get_ai_summary(content)
+                summary = get_ai_summary(content, models)
                 
                 header = "**יש עדכון חדש על הפועל 💙**"
                 summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪️"
@@ -85,7 +100,7 @@ def main():
                 
                 with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                 new_found += 1
-                time.sleep(5) # המתנה כדי לא להעמיס על המכסה
+                time.sleep(5)
 
     print(f"🏁 סיום. נמצאו {new_found} כתבות.")
 
