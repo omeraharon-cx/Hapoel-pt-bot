@@ -29,26 +29,28 @@ def get_full_article_text(url):
     except: return ""
 
 def get_available_models():
-    """שואל את גוגל אילו מודלים זמינים כרגע בחשבון"""
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
         response = requests.get(url)
         data = response.json()
         models = [m['name'] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-        # נסדר אותם כך ש-1.5 פלאש יהיה ראשון (כי הוא הכי יציב בחינם)
         models.sort(key=lambda x: '1.5-flash' not in x)
         return models
     except:
-        return ["models/gemini-1.5-flash", "models/gemini-pro"]
+        return ["models/gemini-1.5-flash"]
 
 def get_ai_summary(text, models):
     if not text or len(text) < 150: return None
     
-    prompt = f"אתה אוהד שרוף של הפועל פתח תקווה. סכם ב-3 משפטים קצרים מהזווית של הפועל פתח תקווה בלבד: {text[:2500]}"
+    prompt = (
+        f"סכם את הכתבה הבאה ב-3 משפטים קצרים בצורה עניינית, אובייקטיבית וברורה. "
+        f"התמקד בעובדות המרכזיות בלבד, ללא נימה רגשית, ללא ביקורת וללא נקיטת עמדה של אוהד. "
+        f"הנגש את המידע לקריאה מהירה ופשוטה: {text[:2500]}"
+    )
+    
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {'Content-Type': 'application/json'}
 
-    # מנסה כל מודל שגוגל אמרה לנו שקיים
     for model_path in models:
         for version in ['v1', 'v1beta']:
             try:
@@ -58,19 +60,13 @@ def get_ai_summary(text, models):
                     data = response.json()
                     if 'candidates' in data:
                         return data['candidates'][0]['content']['parts'][0]['text']
-                elif response.status_code == 429:
-                    print(f"⏳ מודל {model_path} בעומס (מכסה נגמרה), מנסה את הבא...")
             except:
                 continue
     return None
 
 def main():
-    print("🚀 סריקה התחילה (מצב סריקה חכמה)...")
-    
-    # שלב 1: מציאת רשימת המודלים שבאמת קיימים עבורך
+    print("🚀 סריקה התחילה (נימה עניינית)...")
     models = get_available_models()
-    print(f"📋 נמצאו {len(models)} מודלים פוטנציאליים.")
-    
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
