@@ -23,10 +23,19 @@ def get_full_article_text(url):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=20)
         soup = BeautifulSoup(response.content, 'html.parser')
-        for s in soup(['script', 'style', 'nav', 'header', 'footer']): s.decompose()
-        text_blocks = soup.find_all(['p', 'h2'])
-        return " ".join([t.text for t in text_blocks if len(t.text) > 30])
-    except: return ""
+        
+        # ניקוי זבל
+        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'iframe']): s.decompose()
+        
+        # חיפוש טקסט בבלוקים נפוצים
+        text_blocks = soup.find_all(['p', 'h2', 'div.article-content', 'div.content'])
+        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
+        
+        print(f"📄 נשאבו {len(full_text)} תווים מהכתבה.")
+        return full_text
+    except Exception as e:
+        print(f"⚠️ שגיאה בשאיבת תוכן: {e}")
+        return ""
 
 def get_available_models():
     try:
@@ -40,12 +49,15 @@ def get_available_models():
         return ["models/gemini-1.5-flash"]
 
 def get_ai_summary(text, models):
-    if not text or len(text) < 150: return None
+    if not text or len(text) < 150:
+        print(f"🛑 תקציר בוטל: הטקסט קצר מדי ({len(text)} תווים).")
+        return None
     
+    # הפרומפט הענייני והאובייקטיבי שביקשת
     prompt = (
         f"סכם את הכתבה הבאה ב-3 משפטים קצרים בצורה עניינית, אובייקטיבית וברורה. "
-        f"התמקד בעובדות המרכזיות בלבד, ללא נימה רגשית, ללא ביקורת וללא נקיטת עמדה של אוהד. "
-        f"הנגש את המידע לקריאה מהירה ופשוטה: {text[:2500]}"
+        f"התמקד בעובדות המרכזיות בלבד מהזווית של הפועל פתח תקווה. "
+        f"אל תשתמש בכינויי שייכות (כמו 'שלנו'), אל תהיה רגשי, והנגש את המידע לקריאה מהירה: {text[:2800]}"
     )
     
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -56,16 +68,25 @@ def get_ai_summary(text, models):
             try:
                 url = f"https://generativelanguage.googleapis.com/{version}/{model_path}:generateContent?key={GEMINI_API_KEY}"
                 response = requests.post(url, headers=headers, json=payload, timeout=15)
+                data = response.json()
+                
                 if response.status_code == 200:
-                    data = response.json()
-                    if 'candidates' in data:
-                        return data['candidates'][0]['content']['parts'][0]['text']
+                    if 'candidates' in data and data['candidates']:
+                        candidate = data['candidates'][0]
+                        # בדיקה אם גוגל חסמה את התשובה בגלל בטיחות
+                        if candidate.get('finishReason') == 'SAFETY':
+                            print(f"🛡️ גוגל חסמה את התקציר למודל {model_path} בגלל סיבות בטיחות.")
+                            continue
+                        return candidate['content']['parts'][0]['text']
+                elif response.status_code == 429:
+                    print(f"⏳ מכסה נגמרה למודל {model_path}, מנסה את הבא...")
             except:
                 continue
+    print("❌ לא ניתן היה להפיק תקציר מאף מודל.")
     return None
 
 def main():
-    print("🚀 סריקה התחילה (נימה עניינית)...")
+    print("🚀 סריקה התחילה (גרסת דיאגנוסטיקה)...")
     models = get_available_models()
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
