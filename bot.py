@@ -5,7 +5,7 @@ import os
 import time
 import sys
 
-# פקודה שמוודאת שההדפסות יופיעו מיד בלוג של GitHub
+# מוודא שההדפסות יופיעו מיד בלוג
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות מערכת (Secrets) ---
@@ -22,14 +22,24 @@ RSS_FEEDS = [
 ]
 
 def get_full_article_text(url):
+    """שואב טקסט מהכתבה בצורה אגרסיבית כדי למנוע 'תקציר חסר'"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=25)
         soup = BeautifulSoup(response.content, 'html.parser')
-        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']): 
+        
+        # ניקוי רעשים
+        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'button']): 
             s.decompose()
-        text_blocks = soup.find_all(['p', 'h1', 'h2', 'h3'])
-        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
+        
+        # חיפוש טקסט בתוך DIVים נפוצים של תוכן כתבה
+        main_content = soup.find(['div', 'article'], class_=['article-content', 'article-body', 'content', 'story-text'])
+        if main_content:
+            text_blocks = main_content.find_all(['p', 'h2'])
+        else:
+            text_blocks = soup.find_all(['p', 'h2', 'h3'])
+            
+        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 20])
         return full_text
     except:
         return ""
@@ -46,7 +56,10 @@ def get_available_models():
         return ["models/gemini-1.5-flash"]
 
 def get_ai_summary(text, models):
-    if not text or len(text) < 150: return None
+    # הורדתי מעט את הרף ל-100 תווים כדי לתפוס גם כתבות קצרות
+    if not text or len(text) < 100: return None
+    
+    # הפרומפט המנצח שלך שנשמר בדיוק כפי שהיה
     prompt = (
         "### INSTRUCTIONS ###\n"
         "1. Write a summary of the provided sports article in Hebrew.\n"
@@ -57,6 +70,7 @@ def get_ai_summary(text, models):
         "### ARTICLE TEXT ###\n"
         f"{text[:3000]}"
     )
+    
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "safetySettings": [
@@ -66,6 +80,7 @@ def get_ai_summary(text, models):
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ]
     }
+    
     for model_path in models:
         for version in ['v1beta', 'v1']:
             try:
@@ -78,10 +93,8 @@ def get_ai_summary(text, models):
     return None
 
 def main():
-    print("🚀 סריקה התחילה (גרסת סימני חיים)...", flush=True)
+    print("🚀 סריקה התחילה...", flush=True)
     models = get_available_models()
-    print(f"🤖 מודלים זמינים: {len(models)}", flush=True)
-    
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
@@ -94,7 +107,6 @@ def main():
     for feed_url in RSS_FEEDS:
         print(f"📡 בודק פיד: {feed_url}", flush=True)
         feed = feedparser.parse(feed_url)
-        print(f"🔍 נמצאו {len(feed.entries)} כתבות בפיד.", flush=True)
         
         for entry in feed.entries:
             link, title = entry.link, entry.title
@@ -104,11 +116,11 @@ def main():
             search_area = (title + " " + content).lower()
             
             if any(key in search_area for key in hapoel_keys) or "hapoelpt.com" in link:
-                print(f"🎯 נמצאה כתבה: {title}", flush=True)
+                print(f"🎯 נמצאה כתבה: {title} (אורך טקסט: {len(content)})", flush=True)
                 summary = get_ai_summary(content, models)
                 
                 header = "**יש עדכון חדש על הפועל 💙**"
-                summary_final = summary if summary else "הכתבה ללא תקציר 🔵⚪️"
+                summary_final = summary if summary else "הכתבה ללא תקציר (תוכן קצר מדי) 🔵⚪️"
                 msg = f"{header}\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
                 
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
