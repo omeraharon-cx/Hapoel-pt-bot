@@ -5,7 +5,7 @@ import os
 import time
 import sys
 
-# מוודא שההדפסות יופיעו מיד בלוג
+# מוודא שההדפסות יופיעו מיד בלוג של GitHub
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות מערכת (Secrets) ---
@@ -45,6 +45,7 @@ def get_full_article_text(url):
         return ""
 
 def get_available_models():
+    """מוודא אילו מודלים פתוחים בחשבון כדי למנוע שגיאות 404"""
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
         response = requests.get(url, timeout=10)
@@ -56,10 +57,10 @@ def get_available_models():
         return ["models/gemini-1.5-flash"]
 
 def get_ai_summary(text, models):
-    # הורדתי מעט את הרף ל-100 תווים כדי לתפוס גם כתבות קצרות
+    """מפיק תקציר ענייני, קליל וממוקד הפועל פתח תקווה"""
     if not text or len(text) < 100: return None
     
-    # הפרומפט המנצח שלך שנשמר בדיוק כפי שהיה
+    # הפרומפט המנצח והיציב שלך
     prompt = (
         "### INSTRUCTIONS ###\n"
         "1. Write a summary of the provided sports article in Hebrew.\n"
@@ -67,6 +68,9 @@ def get_ai_summary(text, models):
         "3. Tone: Casual, friendly (friend-to-friend), but concise and non-biased. No slang or jokes.\n"
         "4. NO GREETINGS: Do NOT start with 'Hi', 'Hello', 'Friends' or any intro. Start directly with the news content.\n"
         "5. MANDATORY CONTEXT: Always relate the news to Hapoel Petah Tikva (The Blues).\n"
+        "   - If the team is mentioned, summarize what was said about them.\n"
+        "   - If it's general news, explain how it impacts Hapoel Petah Tikva specifically.\n"
+        "\n"
         "### ARTICLE TEXT ###\n"
         f"{text[:3000]}"
     )
@@ -93,20 +97,34 @@ def get_ai_summary(text, models):
     return None
 
 def main():
-    print("🚀 סריקה התחילה...", flush=True)
+    print("🚀 סריקה התחילה (כולל מילת מפתח: מבנה)...", flush=True)
     models = get_available_models()
+    print(f"🤖 מודלים זמינים: {len(models)}", flush=True)
+    
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
     with open(db_file, 'r') as f:
         history = f.read().splitlines()
 
-    hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים"]
+    # רשימת מילות המפתח המורחבת
+    hapoel_keys = [
+        "הפועל פתח תקווה", 
+        "הפועל פתח-תקווה", 
+        "הפועל פתח תקוה", 
+        "הפועל פ\"ת", 
+        "מלאבס", 
+        "הכחולים",
+        "הפועל מבנה פתח תקווה",
+        "הפועל מבנה פתח-תקווה",
+        "הפועל מבנה פתח תקוה"
+    ]
     new_found = 0
 
     for feed_url in RSS_FEEDS:
         print(f"📡 בודק פיד: {feed_url}", flush=True)
         feed = feedparser.parse(feed_url)
+        print(f"🔍 נמצאו {len(feed.entries)} כתבות בפיד.", flush=True)
         
         for entry in feed.entries:
             link, title = entry.link, entry.title
