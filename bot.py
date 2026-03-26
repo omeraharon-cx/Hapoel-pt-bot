@@ -5,7 +5,7 @@ import os
 import time
 import sys
 
-# מוודא שההדפסות יופיעו מיד בלוג של GitHub
+# מוודא שההדפסות יופיעו מיד בלוג
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות מערכת (Secrets) ---
@@ -22,30 +22,17 @@ RSS_FEEDS = [
 ]
 
 def get_full_article_text(url):
-    """שואב טקסט מהכתבה בצורה אגרסיבית כדי למנוע 'תקציר חסר'"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=25)
         soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # ניקוי רעשים
-        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'button']): 
-            s.decompose()
-        
-        # חיפוש טקסט בתוך DIVים נפוצים של תוכן כתבה
-        main_content = soup.find(['div', 'article'], class_=['article-content', 'article-body', 'content', 'story-text'])
-        if main_content:
-            text_blocks = main_content.find_all(['p', 'h2'])
-        else:
-            text_blocks = soup.find_all(['p', 'h2', 'h3'])
-            
-        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 20])
+        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']): s.decompose()
+        text_blocks = soup.find_all(['p', 'h1', 'h2', 'h3'])
+        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
         return full_text
-    except:
-        return ""
+    except: return ""
 
 def get_available_models():
-    """מוודא אילו מודלים פתוחים בחשבון כדי למנוע שגיאות 404"""
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
         response = requests.get(url, timeout=10)
@@ -53,23 +40,18 @@ def get_available_models():
         models = [m['name'] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
         models.sort(key=lambda x: '1.5-flash' not in x)
         return models
-    except:
-        return ["models/gemini-1.5-flash"]
+    except: return ["models/gemini-1.5-flash"]
 
 def get_ai_summary(text, models):
-    """מפיק תקציר ענייני, קליל וממוקד הפועל פתח תקווה"""
     if not text or len(text) < 100: return None
     
-    # הפרומפט המנצח והיציב שלך
     prompt = (
         "### INSTRUCTIONS ###\n"
-        "1. Write a summary of the provided sports article in Hebrew.\n"
-        "2. Length: Exactly 3 short sentences.\n"
-        "3. Tone: Casual, friendly (friend-to-friend), but concise and non-biased. No slang or jokes.\n"
-        "4. NO GREETINGS: Do NOT start with 'Hi', 'Hello', 'Friends' or any intro. Start directly with the news content.\n"
-        "5. MANDATORY CONTEXT: Always relate the news to Hapoel Petah Tikva (The Blues).\n"
-        "   - If the team is mentioned, summarize what was said about them.\n"
-        "   - If it's general news, explain how it impacts Hapoel Petah Tikva specifically.\n"
+        "1. Analyze if the provided article is PRIMARILY about Hapoel Petah Tikva.\n"
+        "2. Even if it's a short text, check if Hapoel Petah Tikva is the main subject.\n"
+        "3. If Hapoel Petah Tikva is only mentioned briefly as an opponent in a long text about another team, return ONLY: SKIP\n"
+        "4. Otherwise, write a 3-sentence summary in Hebrew. Tone: Casual, friend-to-friend, NO greetings.\n"
+        "5. MANDATORY: Focus on the impact on Hapoel Petah Tikva.\n"
         "\n"
         "### ARTICLE TEXT ###\n"
         f"{text[:3000]}"
@@ -80,7 +62,6 @@ def get_ai_summary(text, models):
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ]
     }
@@ -92,63 +73,69 @@ def get_ai_summary(text, models):
                 response = requests.post(url, json=payload, timeout=15)
                 data = response.json()
                 if response.status_code == 200 and 'candidates' in data:
-                    return data['candidates'][0]['content']['parts'][0]['text'].strip()
+                    res = data['candidates'][0]['content']['parts'][0]['text'].strip()
+                    if "SKIP" in res.upper() and len(res) < 10:
+                        return "REJECTED_BY_AI"
+                    return res
             except: continue
     return None
 
 def main():
-    print("🚀 סריקה התחילה (כולל מילת מפתח: מבנה)...", flush=True)
+    print("🚀 סריקה התחילה (גרסת הגנה על כתבות קצרות)...", flush=True)
     models = get_available_models()
-    print(f"🤖 מודלים זמינים: {len(models)}", flush=True)
-    
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
         with open(db_file, 'w') as f: f.write("")
     with open(db_file, 'r') as f:
         history = f.read().splitlines()
 
-    # רשימת מילות המפתח המורחבת
-    hapoel_keys = [
-        "הפועל פתח תקווה", 
-        "הפועל פתח-תקווה", 
-        "הפועל פתח תקוה", 
-        "הפועל פ\"ת", 
-        "מלאבס", 
-        "הכחולים",
-        "הפועל מבנה פתח תקווה",
-        "הפועל מבנה פתח-תקווה",
-        "הפועל מבנה פתח תקוה"
-    ]
+    hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
     new_found = 0
 
     for feed_url in RSS_FEEDS:
-        print(f"📡 בודק פיד: {feed_url}", flush=True)
         feed = feedparser.parse(feed_url)
-        print(f"🔍 נמצאו {len(feed.entries)} כתבות בפיד.", flush=True)
-        
         for entry in feed.entries:
             link, title = entry.link, entry.title
             if link in history or title in history: continue
             
             content = get_full_article_text(link)
-            search_area = (title + " " + content).lower()
+            content_lower = content.lower()
+            title_lower = title.lower()
             
-            if any(key in search_area for key in hapoel_keys) or "hapoelpt.com" in link:
-                print(f"🎯 נמצאה כתבה: {title} (אורך טקסט: {len(content)})", flush=True)
+            is_in_title = any(key in title_lower for key in hapoel_keys)
+            count_in_body = sum(content_lower.count(key) for key in hapoel_keys)
+            
+            # --- הלוגיקה החדשה והמשופרת ---
+            should_check = False
+            if is_in_title:
+                should_check = True # אם זה בכותרת - תמיד בודקים
+            elif count_in_body >= 2:
+                should_check = True # אם מופיע פעמיים ומעלה - תמיד בודקים
+            elif count_in_body == 1 and len(content) < 600:
+                should_check = True # חוק הכתבה הקצרה: אזכור אחד בטקסט קצר מספיק חשוב לבדיקה
+            elif "hapoelpt.com" in link:
+                should_check = True # אתר אוהדים - תמיד בודקים
+
+            if should_check:
+                print(f"🎯 בודק רלוונטיות: {title} (אורך: {len(content)}, אזכורים: {count_in_body})", flush=True)
                 summary = get_ai_summary(content, models)
                 
-                header = "**יש עדכון חדש על הפועל 💙**"
-                summary_final = summary if summary else "הכתבה ללא תקציר (תוכן קצר מדי) 🔵⚪️"
-                msg = f"{header}\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
-                
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                             json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-                
-                with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
-                new_found += 1
-                time.sleep(5)
+                if summary == "REJECTED_BY_AI":
+                    print(f"⏭️ AI דילג על: {title}", flush=True)
+                    with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
+                    continue
 
-    print(f"🏁 סיום. נמצאו {new_found} כתבות חדשות.", flush=True)
+                if summary:
+                    header = "**יש עדכון חדש על הפועל 💙**"
+                    msg = f"{header}\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                                 json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+                    
+                    with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
+                    new_found += 1
+                    time.sleep(5)
+
+    print(f"🏁 סיום. נשלחו {new_found} כתבות.", flush=True)
 
 if __name__ == "__main__":
     main()
