@@ -13,7 +13,9 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "425605110"
 
+# רשימת הפידים המעודכנת - הוספתי את האתר הרשמי של הפועל
 RSS_FEEDS = [
+    "https://www.hapoelpt.com/blog-feed.xml", # האתר הרשמי/אוהדים
     "https://www.one.co.il/cat/rss/",
     "https://www.sport5.co.il/RSS.aspx",
     "https://www.ynet.co.il/Integration/StoryRss1854.xml",
@@ -48,10 +50,9 @@ def get_ai_summary(text, models):
     prompt = (
         "### INSTRUCTIONS ###\n"
         "1. Analyze if the provided article is PRIMARILY about Hapoel Petah Tikva.\n"
-        "2. Even if it's a short text, check if Hapoel Petah Tikva is the main subject.\n"
-        "3. If Hapoel Petah Tikva is only mentioned briefly as an opponent in a long text about another team, return ONLY: SKIP\n"
-        "4. Otherwise, write a 3-sentence summary in Hebrew. Tone: Casual, friend-to-friend, NO greetings.\n"
-        "5. MANDATORY: Focus on the impact on Hapoel Petah Tikva.\n"
+        "2. If Hapoel Petah Tikva is the main subject, write a 3-sentence summary in Hebrew.\n"
+        "3. Tone: Casual, friend-to-friend, NO greetings (No 'Hi', No 'Friends').\n"
+        "4. MANDATORY: Focus on the impact on Hapoel Petah Tikva and the specific news/result.\n"
         "\n"
         "### ARTICLE TEXT ###\n"
         f"{text[:3000]}"
@@ -81,7 +82,7 @@ def get_ai_summary(text, models):
     return None
 
 def main():
-    print("🚀 סריקה התחילה (גרסת הגנה על כתבות קצרות)...", flush=True)
+    print("🚀 סריקה התחילה (כולל האתר הרשמי)...", flush=True)
     models = get_available_models()
     db_file = "seen_links.txt"
     if not os.path.exists(db_file):
@@ -93,7 +94,9 @@ def main():
     new_found = 0
 
     for feed_url in RSS_FEEDS:
+        print(f"📡 בודק פיד: {feed_url}", flush=True)
         feed = feedparser.parse(feed_url)
+        
         for entry in feed.entries:
             link, title = entry.link, entry.title
             if link in history or title in history: continue
@@ -105,23 +108,18 @@ def main():
             is_in_title = any(key in title_lower for key in hapoel_keys)
             count_in_body = sum(content_lower.count(key) for key in hapoel_keys)
             
-            # --- הלוגיקה החדשה והמשופרת ---
+            # אם זה מהאתר הרשמי - אנחנו תמיד רוצים לבדוק את זה לעומק
+            is_official = "hapoelpt.com" in link or "hapoelpt.com" in feed_url
+            
             should_check = False
-            if is_in_title:
-                should_check = True # אם זה בכותרת - תמיד בודקים
-            elif count_in_body >= 2:
-                should_check = True # אם מופיע פעמיים ומעלה - תמיד בודקים
-            elif count_in_body == 1 and len(content) < 600:
-                should_check = True # חוק הכתבה הקצרה: אזכור אחד בטקסט קצר מספיק חשוב לבדיקה
-            elif "hapoelpt.com" in link:
-                should_check = True # אתר אוהדים - תמיד בודקים
+            if is_official or is_in_title or count_in_body >= 2 or (count_in_body == 1 and len(content) < 600):
+                should_check = True
 
             if should_check:
-                print(f"🎯 בודק רלוונטיות: {title} (אורך: {len(content)}, אזכורים: {count_in_body})", flush=True)
+                print(f"🎯 מעבד כתבה: {title}", flush=True)
                 summary = get_ai_summary(content, models)
                 
                 if summary == "REJECTED_BY_AI":
-                    print(f"⏭️ AI דילג על: {title}", flush=True)
                     with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                     continue
 
