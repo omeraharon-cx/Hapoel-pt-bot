@@ -13,7 +13,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 # --- הגדרות מערכת ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = "425605110"
+ADMIN_ID = "425605110" # ה-ID שלך, שיהיה תמיד ברשימה
 
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
@@ -24,6 +24,38 @@ RSS_FEEDS = [
     "https://sport1.mariv.co.il/feed/"
 ]
 
+def get_subscribers():
+    """טוען את רשימת המנויים מהקובץ ובודק אם יש נרשמים חדשים בטלגרם"""
+    sub_file = "subscribers.txt"
+    if not os.path.exists(sub_file):
+        with open(sub_file, 'w') as f: f.write(ADMIN_ID + "\n")
+    
+    with open(sub_file, 'r') as f:
+        subs = set(line.strip() for line in f if line.strip())
+
+    # בדיקה מול טלגרם אם היו הודעות חדשות (/start)
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        response = requests.get(url, timeout=10).json()
+        if response.get("ok"):
+            for update in response.get("result", []):
+                chat_id = str(update.get("message", {}).get("chat", {}).get("id", ""))
+                if chat_id and chat_id not in subs:
+                    print(f"👤 מנוי חדש הצטרף: {chat_id}")
+                    subs.add(chat_id)
+                    # שליחת הודעת ברוך הבא
+                    welcome_msg = "ברוכים הבאים לעדכוני הפועל פתח תקווה! 💙\nמעכשיו תקבלו כאן תקצירים של כל הכתבות הכי חשובות."
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                                 json={"chat_id": chat_id, "text": welcome_msg})
+            
+            # שמירה מעודכנת לקובץ
+            with open(sub_file, 'w') as f:
+                for s in subs: f.write(s + "\n")
+    except Exception as e:
+        print(f"⚠️ שגיאה בבדיקת מנויים חדשים: {e}")
+    
+    return list(subs)
+
 def get_full_article_text(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
@@ -31,7 +63,8 @@ def get_full_article_text(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']): s.decompose()
         text_blocks = soup.find_all(['p', 'h1', 'h2', 'h3'])
-        return " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
+        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
+        return full_text
     except: return ""
 
 def get_available_models():
@@ -46,23 +79,18 @@ def get_available_models():
 
 def get_ai_summary(text, models, recent_summaries):
     if not text or len(text) < 100: return None
-    
-    # הוספת היסטוריית תקצירים אחרונה למניעת כפילויות תוכן
     summaries_context = "\n".join([f"- {s}" for s in recent_summaries])
-    
     prompt = (
         "### INSTRUCTIONS ###\n"
         "1. Analyze the article. Is it PRIMARILY about Hapoel Petah Tikva? If not, return ONLY: SKIP\n"
-        f"2. Check if this news describes the EXACT SAME event/result as any of these recent updates:\n{summaries_context}\n"
-        "3. If it is a duplicate of a recent update, return ONLY: DUPLICATE\n"
+        f"2. Check if this news describes the EXACT SAME event as these recent updates:\n{summaries_context}\n"
+        "3. If it is a duplicate, return ONLY: DUPLICATE\n"
         "4. Otherwise, write a 3-sentence Hebrew summary. Casual tone, NO greetings, focus on Hapoel PT.\n"
         "\n"
         "### ARTICLE TEXT ###\n"
         f"{text[:3000]}"
     )
-    
     payload = {"contents": [{"parts": [{"text": prompt}]}], "safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}]}
-    
     for model_path in models:
         for version in ['v1beta', 'v1']:
             try:
@@ -71,23 +99,27 @@ def get_ai_summary(text, models, recent_summaries):
                 data = response.json()
                 if response.status_code == 200 and 'candidates' in data:
                     res = data['candidates'][0]['content']['parts'][0]['text'].strip()
-                    if "SKIP" in res.upper() or "DUPLICATE" in res.upper():
-                        return "REJECTED"
+                    if "SKIP" in res.upper() or "DUPLICATE" in res.upper(): return "REJECTED"
                     return res
             except: continue
     return None
 
 def main():
-    print("🚀 סריקה התחילה (גרסת הגנת תאריך וכפילויות)...", flush=True)
+    print("🚀 סריקה התחילה (מצב הרשמה אוטומטית)...", flush=True)
+    
+    # 1. ניהול מנויים
+    subscribers = get_subscribers()
+    print(f"👥 רשימת תפוצה: {len(subscribers)} מנויים.")
+    
     models = get_available_models()
     db_file = "seen_links.txt"
-    summary_db = "recent_summaries.txt" # קובץ חדש לשמירת התקצירים האחרונים
+    summary_db = "recent_summaries.txt"
     
     if not os.path.exists(db_file): open(db_file, 'w').close()
     if not os.path.exists(summary_db): open(summary_db, 'w').close()
         
     with open(db_file, 'r') as f: history = f.read().splitlines()
-    with open(summary_db, 'r', encoding='utf-8') as f: recent_summaries = f.read().splitlines()[-10:] # לוקחים 10 אחרונים
+    with open(summary_db, 'r', encoding='utf-8') as f: recent_summaries = f.read().splitlines()[-10:]
 
     hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
     new_found = 0
@@ -97,20 +129,15 @@ def main():
         for entry in feed.entries:
             link, title = entry.link, entry.title
             
-            # 1. סנן תאריך: האם הכתבה מלפני יותר משבוע?
             published = entry.get('published_parsed')
             if published:
                 dt_published = datetime.fromtimestamp(calendar.timegm(published))
-                if datetime.now() - dt_published > timedelta(days=7):
-                    continue
+                if datetime.now() - dt_published > timedelta(days=7): continue
 
-            # 2. האם כבר ראינו את הלינק?
             if link in history or title in history: continue
             
             content = get_full_article_text(link)
             content_lower = content.lower()
-            
-            # 3. בדיקת רלוונטיות בסיסית
             is_official = "hapoelpt.com" in link
             is_in_title = any(key in title.lower() for key in hapoel_keys)
             count_in_body = sum(content_lower.count(key) for key in hapoel_keys)
@@ -120,25 +147,26 @@ def main():
                 summary = get_ai_summary(content, models, recent_summaries)
                 
                 if summary == "REJECTED":
-                    print(f"⏭️ AI החליט לדלג (לא רלוונטי או כפול).", flush=True)
                     with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                     continue
 
                 if summary:
-                    # שליחה לטלגרם
                     header = "**יש עדכון חדש על הפועל 💙**"
                     msg = f"{header}\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
-                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                                 json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
                     
-                    # שמירה להיסטוריה
+                    # שליחה לכולם
+                    for cid in subscribers:
+                        try:
+                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                                         json={"chat_id": cid, "text": msg, "parse_mode": "Markdown"})
+                        except: pass
+                    
                     with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                     with open(summary_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
-                    
                     new_found += 1
                     time.sleep(5)
 
-    print(f"🏁 סיום. נשלחו {new_found} כתבות.", flush=True)
+    print(f"🏁 סיום.")
 
 if __name__ == "__main__":
     main()
