@@ -9,10 +9,12 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # חשוב מאוד: מאפשר לבוט לזכור אילו כתבות הוא כבר שלח
+      contents: write # מאפשר לבוט לעדכן את קבצי ההיסטוריה והמנויים
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # מוודא שמורידים את כל ההיסטוריה למניעת בעיות ב-Push
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,13 +28,18 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }} # המפתח החדש שהוספת
         run: python bot.py
 
       - name: Save history
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          
+          # יצירת הקבצים אם הם לא קיימים כדי למנוע שגיאות ב-git add
+          touch seen_links.txt recent_summaries.txt subscribers.txt
+          
           git add seen_links.txt recent_summaries.txt subscribers.txt
-          git commit -m "Update history and subscribers" || echo "No changes to commit"
+          git commit -m "Update history, summaries and subscribers [skip ci]" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main
