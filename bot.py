@@ -1,172 +1,104 @@
-import feedparser
-import requests
-from bs4 import BeautifulSoup
 import os
-import time
+import requests
 import sys
-from datetime import datetime, timedelta
-import calendar
+from datetime import datetime
 
-# מוודא שההדפסות יופיעו מיד בלוג
+# קידוד לעברית
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- הגדרות מערכת ---
+# --- הגדרות מערכת (Secrets מ-GitHub) ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-ADMIN_ID = "425605110" # ה-ID שלך, שיהיה תמיד ברשימה
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
+ADMIN_ID = "425605110"
 
-RSS_FEEDS = [
-    "https://www.hapoelpt.com/blog-feed.xml",
-    "https://www.one.co.il/cat/rss/",
-    "https://www.sport5.co.il/RSS.aspx",
-    "https://www.ynet.co.il/Integration/StoryRss1854.xml",
-    "https://rss.walla.co.il/feed/3",
-    "https://sport1.mariv.co.il/feed/"
-]
+# המזהה של הפועל פתח תקווה
+HAPOEL_TEAM_ID = "5199"
 
-def get_subscribers():
-    """טוען את רשימת המנויים מהקובץ ובודק אם יש נרשמים חדשים בטלגרם"""
-    sub_file = "subscribers.txt"
-    if not os.path.exists(sub_file):
-        with open(sub_file, 'w') as f: f.write(ADMIN_ID + "\n")
-    
-    with open(sub_file, 'r') as f:
-        subs = set(line.strip() for line in f if line.strip())
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": ADMIN_ID, "text": text, "parse_mode": "Markdown"})
 
-    # בדיקה מול טלגרם אם היו הודעות חדשות (/start)
+def get_ai_message(prompt):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-        response = requests.get(url, timeout=10).json()
-        if response.get("ok"):
-            for update in response.get("result", []):
-                chat_id = str(update.get("message", {}).get("chat", {}).get("id", ""))
-                if chat_id and chat_id not in subs:
-                    print(f"👤 מנוי חדש הצטרף: {chat_id}")
-                    subs.add(chat_id)
-                    # שליחת הודעת ברוך הבא
-                    welcome_msg = "ברוכים הבאים לעדכוני הפועל פתח תקווה! 💙\nמעכשיו תקבלו כאן תקצירים של כל הכתבות הכי חשובות."
-                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                                 json={"chat_id": chat_id, "text": welcome_msg})
+        res = requests.post(url, json=payload, timeout=20)
+        return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    except: return None
+
+# --- הודעת בוקר של משחק ---
+def check_match_day():
+    if not RAPIDAPI_KEY: return
+    url = f"https://sportapi7.p.rapidapi.com/api/v1/team/{HAPOEL_TEAM_ID}/events/next/0"
+    headers = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": "sportapi7.p.rapidapi.com"}
+    
+    try:
+        res = requests.get(url, headers=headers, timeout=15).json()
+        next_event = res.get('events', [{}])[0]
+        start_ts = next_event.get('startTimestamp')
+        if not start_ts: return
+        
+        match_date = datetime.fromtimestamp(start_ts).date()
+        if match_date == datetime.now().date():
+            state_file = "match_day_notified.txt"
+            today_str = str(match_date)
+            if os.path.exists(state_file):
+                with open(state_file, 'r') as f:
+                    if f.read().strip() == today_str: return
             
-            # שמירה מעודכנת לקובץ
-            with open(sub_file, 'w') as f:
-                for s in subs: f.write(s + "\n")
-    except Exception as e:
-        print(f"⚠️ שגיאה בבדיקת מנויים חדשים: {e}")
+            msg = "יום של משחק הפועל 💙\nעוד כמה שעות הפועל תעלה לכר הדשא ותתן את הנשמה!\nתשרפו את הדשא ותביאו נצחון!\n\nיאלללה הפועללללל!"
+            send_telegram(msg)
+            with open(state_file, 'w') as f: f.write(today_str)
+    except: pass
+
+# --- הודעת סיום משחק ---
+def check_match_results():
+    if not RAPIDAPI_KEY: return
+    url = f"https://sportapi7.p.rapidapi.com/api/v1/team/{HAPOEL_TEAM_ID}/events/last/0"
+    headers = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": "sportapi7.p.rapidapi.com"}
     
-    return list(subs)
-
-def get_full_article_text(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
-        response = requests.get(url, headers=headers, timeout=25)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']): s.decompose()
-        text_blocks = soup.find_all(['p', 'h1', 'h2', 'h3'])
-        full_text = " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
-        return full_text
-    except: return ""
+        res = requests.get(url, headers=headers, timeout=15).json()
+        match = res.get('events', [{}])[0]
+        if match.get('status', {}).get('type') != 'finished': return
+        
+        event_id = str(match.get('id'))
+        db_file = "seen_results.txt"
+        if not os.path.exists(db_file): open(db_file, 'w').close()
+        with open(db_file, 'r') as f:
+            if event_id in f.read(): return
+            
+        h_score, a_score = match['homeScore']['display'], match['awayScore']['display']
+        h_name, a_name = match['homeTeam']['name'], match['awayTeam']['name']
+        
+        is_h_home = "Petach Tikva" in h_name
+        win = (is_h_home and h_score > a_score) or (not is_h_home and a_score > h_score)
+        draw = h_score == a_score
 
-def get_available_models():
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        models = [m['name'] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-        models.sort(key=lambda x: '1.5-flash' not in x)
-        return models
-    except: return ["models/gemini-1.5-flash"]
-
-def get_ai_summary(text, models, recent_summaries):
-    if not text or len(text) < 100: return None
-    summaries_context = "\n".join([f"- {s}" for s in recent_summaries])
-    prompt = (
-        "### INSTRUCTIONS ###\n"
-        "1. Analyze the article. Is it PRIMARILY about Hapoel Petah Tikva? If not, return ONLY: SKIP\n"
-        f"2. Check if this news describes the EXACT SAME event as these recent updates:\n{summaries_context}\n"
-        "3. If it is a duplicate, return ONLY: DUPLICATE\n"
-        "4. Otherwise, write a 3-sentence Hebrew summary. Casual tone, NO greetings, focus on Hapoel PT.\n"
-        "\n"
-        "### ARTICLE TEXT ###\n"
-        f"{text[:3000]}"
-    )
-    payload = {"contents": [{"parts": [{"text": prompt}]}], "safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}]}
-    for model_path in models:
-        for version in ['v1beta', 'v1']:
-            try:
-                url = f"https://generativelanguage.googleapis.com/{version}/{model_path}:generateContent?key={GEMINI_API_KEY}"
-                response = requests.post(url, json=payload, timeout=15)
-                data = response.json()
-                if response.status_code == 200 and 'candidates' in data:
-                    res = data['candidates'][0]['content']['parts'][0]['text'].strip()
-                    if "SKIP" in res.upper() or "DUPLICATE" in res.upper(): return "REJECTED"
-                    return res
-            except: continue
-    return None
+        if draw:
+            # ניסוח מדויק שביקשת לתיקו
+            final_msg = "תיקו בסיום המשחק, הפועל יוצאת עם נקודה.\nממשיכים חזק כל הדרך - יאללה הפועל\nהיום יוצאים למלחמה 💙"
+        elif win:
+            # פקודה ל-AI עם השירים והוויב של הטירוף
+            prompt = f"""Hapoel Petah Tikva won {h_score}-{a_score}! Write a crazy victory message in Hebrew.
+            Integrate chants like: 'מי שלא קופץ לוזון', 'שער 4 מעודד האצטדיון רועד', 'כחול עולה', 'אמרו לו הפועל אז הלך לאורווה'.
+            Be emotional, hardcore fan style, use blue emojis. Always end with 'יאללה הפועל 💙'."""
+            final_msg = get_ai_message(prompt)
+        else:
+            # הודעת ניחום
+            prompt = f"Hapoel Petah Tikva lost {h_score}-{a_score}. Write a comforting message in Hebrew, encourage fans to keep heads up. Always end with 'יאללה הפועל 💙'."
+            final_msg = get_ai_message(prompt)
+            
+        if final_msg:
+            full_msg = f"⚽ **סיום משחק!**\n\n{final_msg}\n\n📊 תוצאה: {h_name} {h_score} - {a_score} {a_name}"
+            send_telegram(full_msg)
+            with open(db_file, 'a') as f: f.write(event_id + "\n")
+    except: pass
 
 def main():
-    print("🚀 סריקה התחילה (מצב הרשמה אוטומטית)...", flush=True)
-    
-    # 1. ניהול מנויים
-    subscribers = get_subscribers()
-    print(f"👥 רשימת תפוצה: {len(subscribers)} מנויים.")
-    
-    models = get_available_models()
-    db_file = "seen_links.txt"
-    summary_db = "recent_summaries.txt"
-    
-    if not os.path.exists(db_file): open(db_file, 'w').close()
-    if not os.path.exists(summary_db): open(summary_db, 'w').close()
-        
-    with open(db_file, 'r') as f: history = f.read().splitlines()
-    with open(summary_db, 'r', encoding='utf-8') as f: recent_summaries = f.read().splitlines()[-10:]
-
-    hapoel_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
-    new_found = 0
-
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries:
-            link, title = entry.link, entry.title
-            
-            published = entry.get('published_parsed')
-            if published:
-                dt_published = datetime.fromtimestamp(calendar.timegm(published))
-                if datetime.now() - dt_published > timedelta(days=7): continue
-
-            if link in history or title in history: continue
-            
-            content = get_full_article_text(link)
-            content_lower = content.lower()
-            is_official = "hapoelpt.com" in link
-            is_in_title = any(key in title.lower() for key in hapoel_keys)
-            count_in_body = sum(content_lower.count(key) for key in hapoel_keys)
-            
-            if is_official or is_in_title or count_in_body >= 2 or (count_in_body == 1 and len(content) < 600):
-                print(f"🎯 מעבד: {title}", flush=True)
-                summary = get_ai_summary(content, models, recent_summaries)
-                
-                if summary == "REJECTED":
-                    with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
-                    continue
-
-                if summary:
-                    header = "**יש עדכון חדש על הפועל 💙**"
-                    msg = f"{header}\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
-                    
-                    # שליחה לכולם
-                    for cid in subscribers:
-                        try:
-                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                                         json={"chat_id": cid, "text": msg, "parse_mode": "Markdown"})
-                        except: pass
-                    
-                    with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
-                    with open(summary_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
-                    new_found += 1
-                    time.sleep(5)
-
-    print(f"🏁 סיום.")
+    check_match_day()
+    check_match_results()
 
 if __name__ == "__main__":
     main()
