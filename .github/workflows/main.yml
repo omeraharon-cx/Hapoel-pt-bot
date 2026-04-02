@@ -11,7 +11,8 @@ jobs:
     permissions:
       contents: write # חשוב מאוד: מאפשר לבוט לזכור אילו כתבות הוא כבר שלח
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,14 +27,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         run: python bot.py
-        
-    - name: Save history
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        # עדכון השורה כדי לשמור את כל הקבצים החשובים
-        git add seen_links.txt recent_summaries.txt subscribers.txt
-        git commit -m "Update history and subscribers" || echo "No changes to commit"
-        git pull --rebase origin main
-        git push origin main
-      
+
+      - name: Save history
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add seen_links.txt recent_summaries.txt subscribers.txt
+          git commit -m "Update history and subscribers" || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin main
