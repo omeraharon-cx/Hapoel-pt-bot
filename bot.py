@@ -10,7 +10,7 @@ from datetime import datetime
 # הגדרת לוגים לעברית
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- הגדרות בסיס ---
+# --- הגדרות קבועות ---
 TEAM_ID = "5199" 
 LEAGUE_ID = "877"
 ADMIN_ID = "425605110"
@@ -70,21 +70,28 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=15)
             else:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
-        except: pass
+        except Exception as e: print(f"❌ שגיאת טלגרם: {e}")
 
 def get_ai_response(prompt):
-    """פונקציה חסינה עם המתנה למניעת חסימת 429"""
-    # המתנה קצרה לפני כל פנייה ל-AI כדי לא להעמיס על המכסה החינמית
-    time.sleep(8) 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    """גרסה משודרגת ל-2026 עם כתובת v1 יציבה"""
+    # המתנה כדי לא להיחסם
+    time.sleep(10) 
+    # שינוי הכתובת ל-v1 היציבה
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
     safety = [{"category": c, "threshold": "BLOCK_NONE"} for c in ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]]
+    
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}, timeout=25)
-        if res.status_code == 429:
-            print("⚠️ חריגת מכסה (429) - גוגל חסם אותנו זמנית.")
-            return "RATE_LIMIT"
         data = res.json()
-        return data['candidates'][0]['content']['parts'][0]['text'].strip()
+        
+        if res.status_code == 200 and 'candidates' in data:
+            return data['candidates'][0]['content']['parts'][0]['text'].strip()
+        
+        # אם יש שגיאה, נדפיס אותה כדי לדעת למה גוגל כועס
+        print(f"⚠️ שגיאת AI מפורטת: {data.get('error', {}).get('message', 'Unknown error')}")
+        if res.status_code == 429: return "RATE_LIMIT"
+        return None
     except Exception as e:
         print(f"❌ שגיאת AI: {e}")
         return None
@@ -131,7 +138,7 @@ def main():
     now = datetime.now()
     today_key = now.strftime('%Y-%m-%d')
     
-    update_subscribers()
+    update_subscribers() 
     
     db_file, task_file = "seen_links.txt", "task_log.txt"
     for f in [db_file, task_file]:
@@ -150,18 +157,17 @@ def main():
             if link in history: continue
             if any(j in link.lower() for j in ["finance", "lifestyle", "shopping", "promoted"]): continue
             
-            # בדיקת תוכן
             print(f"🔍 בודק לעומק: {entry.title}")
             full_text = get_full_article_text(link)
             combined_text = (entry.title + " " + full_text).lower()
             
             if any(k in combined_text for k in h_keys) or "hapoelpt.com" in link:
-                print(f"🎯 נמצא קשר להפועל! מבקש סיכום מה-AI...")
+                print(f"🎯 נמצא קשר להפועל! מבקש סיכום...")
                 summary = get_ai_response(f"סכם ב-3 משפטים בעברית את הכתבה על הפועל פתח תקווה. טקסט: {full_text[:2500]}")
                 
                 if summary == "RATE_LIMIT":
-                    print("⚠️ חסימת קצב - ה-AI ברוויה. ננסה שוב בריצה הבאה.")
-                    return # מפסיק את הריצה כדי לא להיחסם חזק יותר
+                    print("⚠️ ה-AI ברוויה, נעצור את הכתבות לריצה זו.")
+                    break
                 
                 if summary:
                     print(f"✅ שולח לטלגרם: {entry.title}")
