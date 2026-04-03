@@ -45,7 +45,8 @@ def get_subscribers():
         return list(set(line.strip() for line in f if line.strip()))
 
 def update_subscribers():
-    print("DEBUG: בודק מצטרפים חדשים בטלגרם...")
+    """בודק בטלגרם אם יש משתמשים חדשים ששלחו /start"""
+    print("DEBUG: בודק מצטרפים חדשים בטלגרם...", flush=True)
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         response = requests.get(url, timeout=10)
@@ -70,7 +71,7 @@ def update_subscribers():
 
 def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_url=None):
     subs = get_subscribers()
-    print(f"DEBUG: שולח ל-{len(subs)} רשומים...")
+    print(f"DEBUG: שולח ל-{len(subs)} רשומים...", flush=True)
     for cid in subs:
         try:
             if is_poll:
@@ -81,32 +82,29 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
         except Exception as e: print(f"❌ שגיאת טלגרם: {e}")
 
-def get_ai_response(prompt):
-    print("DEBUG: פונה ל-Gemini...")
-    # חזרה ל-v1beta שהיא הכי יציבה לדגם Flash
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+def get_ai_response(prompt, model="gemini-1.5-flash"):
+    """פונקציה משופרת לקבלת תשובה מה-AI עם טיפול בשגיאת 404"""
+    print(f"DEBUG: פונה ל-Gemini (דגם {model})...", flush=True)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
     
-    safety = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-    ]
-    
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "safetySettings": safety
-    }
+    safety = [{"category": c, "threshold": "BLOCK_NONE"} for c in ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]]
     
     try:
-        response = requests.post(url, json=payload, timeout=25)
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}, timeout=25)
         data = response.json()
+        
         if response.status_code == 200 and 'candidates' in data and data['candidates']:
             return data['candidates'][0]['content']['parts'][0]['text'].strip()
+        
+        # אם קיבלנו 404 (דגם לא נמצא), ננסה אוטומטית דגם אחר
+        if response.status_code == 404 and model == "gemini-1.5-flash":
+            print("⚠️ דגם Flash לא נמצא, מנסה דגם Pro...", flush=True)
+            return get_ai_response(prompt, model="gemini-1.5-pro")
+            
         print(f"❌ שגיאת API (סטטוס {response.status_code}): {data}")
         return None
     except Exception as e:
-        print(f"❌ שגיאת AI: {e}")
+        print(f"❌ שגיאת AI כללית: {e}")
         return None
 
 def get_full_article_text(url):
@@ -130,6 +128,7 @@ def get_match_players(fixture_id):
     except: return ["עומר כץ", "רם לוי", "דרור ניר", "רוי נאווי", "מתן פלג", "אופק אושר", "מתן גושה", "שחקן אחר"]
 
 def check_match_status():
+    print("DEBUG: בודק RapidAPI...", flush=True)
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
     params = {"team": TEAM_ID, "date": datetime.now().strftime('%Y-%m-%d')}
@@ -137,6 +136,7 @@ def check_match_status():
         res = requests.get(url, headers=headers, params=params, timeout=15).json()
         if res.get('results', 0) > 0:
             m = res['response'][0]
+            print(f"DEBUG: נמצא משחק! סטטוס: {m['fixture']['status']['short']}")
             is_home = str(m['teams']['home']['id']) == TEAM_ID
             return {
                 "id": m['fixture']['id'], "status": m['fixture']['status']['short'],
@@ -169,6 +169,7 @@ def main():
     # 1. סריקת כתבות
     print("📰 שלב 1: סריקת כתבות RSS")
     for feed_url in RSS_FEEDS:
+        print(f"📡 בודק פיד: {feed_url}")
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             link = entry.link
@@ -219,7 +220,7 @@ def main():
             send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"match_end_{today_key}\n")
 
-    # 3. פינת היסטוריה
+    # 3. פינת היסטוריה (רביעי)
     if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
         hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה. עברית.")
         if hist:
