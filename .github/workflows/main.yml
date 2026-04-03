@@ -35,11 +35,8 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
-          # יצירת הקבצים אם הם לא קיימים
           touch seen_links.txt recent_summaries.txt subscribers.txt task_log.txt
-          
           git add seen_links.txt recent_summaries.txt subscribers.txt task_log.txt
-          git commit -m "Update history, summaries and subscribers [skip ci]" || echo "No changes to commit"
+          git commit -m "Update history and tasks [skip ci]" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main
