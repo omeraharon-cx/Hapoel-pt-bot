@@ -35,12 +35,38 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# --- פונקציות עזר ---
+# --- פונקציות ניהול מנויים ---
 
 def get_subscribers():
     sub_file = "subscribers.txt"
-    if not os.path.exists(sub_file): open(sub_file, 'w').write(ADMIN_ID + "\n")
-    with open(sub_file, 'r') as f: return list(set(line.strip() for line in f if line.strip()))
+    if not os.path.exists(sub_file):
+        with open(sub_file, 'w') as f: f.write(ADMIN_ID + "\n")
+    with open(sub_file, 'r') as f:
+        return list(set(line.strip() for line in f if line.strip()))
+
+def update_subscribers():
+    print("DEBUG: בודק מצטרפים חדשים בטלגרם...")
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if data.get("ok"):
+            current_subs = get_subscribers()
+            new_found = False
+            for update in data.get("result", []):
+                if "message" in update and "text" in update["message"]:
+                    if update["message"]["text"] == "/start":
+                        chat_id = str(update["message"]["chat"]["id"])
+                        if chat_id not in current_subs:
+                            with open("subscribers.txt", "a") as f:
+                                f.write(chat_id + "\n")
+                            current_subs.append(chat_id)
+                            print(f"✅ מנוי חדש נוסף: {chat_id}")
+                            new_found = True
+            if not new_found: print("DEBUG: אין מנויים חדשים.")
+    except Exception as e: print(f"❌ שגיאה בעדכון מנויים: {e}")
+
+# --- פונקציות עזר ---
 
 def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_url=None):
     subs = get_subscribers()
@@ -57,7 +83,8 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
 
 def get_ai_response(prompt):
     print("DEBUG: פונה ל-Gemini...")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # התיקון כאן: שינוי מ-v1beta ל-v1 הציבורית והיציבה
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     safety = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -73,27 +100,16 @@ def get_ai_response(prompt):
     
     try:
         response = requests.post(url, json=payload, timeout=25)
-        
-        # אם יש שגיאה מהשרת של גוגל
-        if response.status_code != 200:
-            print(f"❌ שגיאת API (סטטוס {response.status_code}): {response.text}")
-            return None
-            
         data = response.json()
-        
-        # בדיקה אם התשובה קיימת במבנה
-        if 'candidates' in data and data['candidates']:
+        if response.status_code == 200 and 'candidates' in data and data['candidates']:
             return data['candidates'][0]['content']['parts'][0]['text'].strip()
-        else:
-            print(f"⚠️ גוגל לא החזיר תשובה. תגובה מלאה מהשרת: {data}")
-            return None
-            
+        print(f"❌ שגיאת API (סטטוס {response.status_code}): {data}")
+        return None
     except Exception as e:
-        print(f"❌ שגיאת AI כללית: {e}")
+        print(f"❌ שגיאת AI: {e}")
         return None
 
 def get_full_article_text(url):
-    print(f"DEBUG: שולף טקסט מ-{url}")
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=15)
@@ -114,7 +130,6 @@ def get_match_players(fixture_id):
     except: return ["עומר כץ", "רם לוי", "דרור ניר", "רוי נאווי", "מתן פלג", "אופק אושר", "מתן גושה", "שחקן אחר"]
 
 def check_match_status():
-    print("DEBUG: בודק RapidAPI...")
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
     params = {"team": TEAM_ID, "date": datetime.now().strftime('%Y-%m-%d')}
@@ -122,18 +137,14 @@ def check_match_status():
         res = requests.get(url, headers=headers, params=params, timeout=15).json()
         if res.get('results', 0) > 0:
             m = res['response'][0]
-            print(f"DEBUG: נמצא משחק! סטטוס: {m['fixture']['status']['short']}")
             is_home = str(m['teams']['home']['id']) == TEAM_ID
             return {
-                "id": m['fixture']['id'], 
-                "status": m['fixture']['status']['short'], 
-                "my_score": m['goals']['home'] if is_home else m['goals']['away'], 
-                "opp_score": m['goals']['away'] if is_home else m['goals']['home'], 
+                "id": m['fixture']['id'], "status": m['fixture']['status']['short'],
+                "my_score": m['goals']['home'] if is_home else m['goals']['away'],
+                "opp_score": m['goals']['away'] if is_home else m['goals']['home'],
                 "opp_name": m['teams']['away']['name'] if is_home else m['teams']['home']['name']
             }
-    except Exception as e:
-        print(f"❌ שגיאת RapidAPI: {e}")
-        return None
+    except: return None
 
 # --- פונקציה ראשית ---
 
@@ -146,6 +157,9 @@ def main():
     for f in [db_file, sum_db, task_file]:
         if not os.path.exists(f): open(f, 'a').close()
     
+    # 0. עדכון מנויים - עובד ובטוח
+    update_subscribers()
+    
     with open(db_file, 'r') as f: history = set(f.read().splitlines())
     with open(sum_db, 'r', encoding='utf-8') as f: recent_sums = f.read().splitlines()[-15:]
     with open(task_file, 'r') as f: tasks_done = set(f.read().splitlines())
@@ -155,57 +169,40 @@ def main():
     # 1. סריקת כתבות
     print("📰 שלב 1: סריקת כתבות RSS")
     for feed_url in RSS_FEEDS:
-        print(f"📡 בודק פיד: {feed_url}")
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             link = entry.link
-            
-            # סינון לינקים "זבל" לפני שבכלל נוגעים בהם
-            junk_words = ["finance", "lifestyle", "fashion", "money", "shopping", "promoted"]
-            if any(junk in link.lower() for junk in junk_words):
-                continue
-            
+            if any(junk in link.lower() for junk in ["finance", "lifestyle", "fashion", "money", "shopping"]): continue
             if link in history: continue
             
-            is_relevant = any(k in entry.title.lower() for k in h_keys) or "hapoelpt.com" in link
-            
-            if is_relevant:
+            if any(k in entry.title.lower() for k in h_keys) or "hapoelpt.com" in link:
                 print(f"🎯 נמצאה כתבה: {entry.title}")
                 content = get_full_article_text(link)
-                prompt = f"Summarize this in 3 Hebrew sentences about Hapoel Petah Tikva. Return SKIP if not relevant. TEXT: {content[:2000]}"
-                summary = get_ai_response(prompt)
-                
+                summary = get_ai_response(f"Summarize in 3 Hebrew sentences about Hapoel Petah Tikva. TEXT: {content[:2000]}")
                 if summary and "SKIP" not in summary.upper():
                     send_to_all(f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})")
                     with open(sum_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
-                    # שומרים רק אם הצלחנו לשלוח הודעה (או לפחות לעבד אותה)
                     with open(db_file, 'a') as f: f.write(link + "\n")
                     history.add(link)
 
-    # 2. בדיקת משחקים
+    # 2. לוגיקת משחקים
     print("⚽️ שלב 2: בדיקת משחקים")
     match = check_match_status()
     if match:
-        # Match Day (בוקר עד 12:00)
         if now.hour < 12 and f"match_poster_{today_key}" not in tasks_done:
-            print("🎨 מפעיל לוגיקת פוסטר")
-            p_prompt = f"Match day poster Hapoel Petah Tikva vs {match['opp_name']}, blue/white, cinematic"
-            img_desc = get_ai_response(f"Translate this to a DALL-E style prompt: {p_prompt}")
+            p_prompt = f"Match day poster Hapoel Petah Tikva vs {match['opp_name']}, blue/white theme, cinematic style."
+            img_desc = get_ai_response(f"Translate this to a DALL-E prompt in English: {p_prompt}")
             if img_desc:
                 url = f"https://pollinations.ai/p/{img_desc.replace(' ', '%20')}"
                 text = "Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️"
                 send_to_all(text, photo_url=url)
                 with open(task_file, 'a') as f: f.write(f"match_poster_{today_key}\n")
 
-        # הימורים (15:00)
         if now.hour == 15 and f"match_bet_{today_key}" not in tasks_done:
-            print("🗳 מפעיל לוגיקת הימורים")
             send_to_all("", is_poll=True, poll_data={"question": f"איך יסתיים המשחק היום מול {match['opp_name']}?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד (חס וחלילה)"], "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"match_bet_{today_key}\n")
 
-        # סיום משחק (FT)
         if match['status'] == 'FT' and f"match_end_{today_key}" not in tasks_done:
-            print("🏁 זיהוי סיום משחק!")
             if match['my_score'] > match['opp_score']:
                 msg = f"{random.choice(WIN_CHANTS)}\n\nיופי הפועללל, איזה נצחון גדול.\nהבאנו 3 נקודות חשובות.\nיאלללה הפועל 💙"
             elif match['my_score'] == match['opp_score']:
@@ -221,6 +218,13 @@ def main():
             players = get_match_players(match['id'])
             send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"match_end_{today_key}\n")
+
+    # 3. פינת היסטוריה
+    if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
+        hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה. עברית.")
+        if hist:
+            send_to_all(f"📚 **פינת ההיסטוריה השבועית** 📚\n\n{hist}")
+            with open(task_file, 'a') as f: f.write(f"hist_{today_key}\n")
 
     print("🏁 סיום.")
 
