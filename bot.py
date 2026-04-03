@@ -83,8 +83,8 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
 
 def get_ai_response(prompt):
     print("DEBUG: פונה ל-Gemini...")
-    # התיקון כאן: שינוי מ-v1beta ל-v1 הציבורית והיציבה
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # חזרה ל-v1beta שהיא הכי יציבה לדגם Flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     safety = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -157,7 +157,7 @@ def main():
     for f in [db_file, sum_db, task_file]:
         if not os.path.exists(f): open(f, 'a').close()
     
-    # 0. עדכון מנויים - עובד ובטוח
+    # 0. עדכון מנויים
     update_subscribers()
     
     with open(db_file, 'r') as f: history = set(f.read().splitlines())
