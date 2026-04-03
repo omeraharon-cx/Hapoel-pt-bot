@@ -8,7 +8,7 @@ import random
 from datetime import datetime, timedelta
 import calendar
 
-# מוודא שההדפסות יופיעו מיד בלוג
+# מוודא שההדפסות יופיעו מיד בלוג של GitHub
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות מזהים (RapidAPI) ---
@@ -52,15 +52,17 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
             if is_poll and poll_data:
                 url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll"
                 payload = {"chat_id": cid, **poll_data}
+                requests.post(url, json=payload, timeout=10)
             elif photo_url:
                 url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
                 payload = {"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown"}
                 if reply_markup: payload["reply_markup"] = reply_markup
+                requests.post(url, json=payload, timeout=15)
             else:
                 url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                payload = {"chat_id": cid, "text": text, "parse_mode": "Markdown"}
+                payload = {"chat_id": cid, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": False}
                 if reply_markup: payload["reply_markup"] = reply_markup
-            requests.post(url, json=payload, timeout=10)
+                requests.post(url, json=payload, timeout=10)
         except: pass
 
 def get_ai_response(prompt):
@@ -129,54 +131,7 @@ def main():
     if not os.path.exists(task_file): open(task_file, 'w').close()
     with open(task_file, 'r') as f: tasks_done = f.read().splitlines()
 
-    match = check_match_status()
-    
-    if match:
-        # 1. Match Day (עד 12:00)
-        if now.hour < 12 and f"match_poster_{today_key}" not in tasks_done:
-            poster_prompt = f"Cinematic football poster: Hapoel Petah Tikva vs {match['opp_name']}, blue and white colors, stadium atmosphere."
-            img_prompt = get_ai_response(f"Translate to an image generation prompt: {poster_prompt}")
-            url = f"https://pollinations.ai/p/{img_prompt.replace(' ', '%20')}" if img_prompt else "https://hapoelpt.com/static/media/logo.png"
-            text = "Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️"
-            send_to_all(text, photo_url=url)
-            with open(task_file, 'a') as f: f.write(f"match_poster_{today_key}\n")
-
-        # 2. הימורים (15:00)
-        if now.hour == 15 and f"match_bet_{today_key}" not in tasks_done:
-            send_to_all("", is_poll=True, poll_data={
-                "question": f"איך יסתיים המשחק היום מול {match['opp_name']}?",
-                "options": ["ניצחון כחול 💙", "תיקו", "הפסד (חס וחלילה)"],
-                "is_anonymous": False
-            })
-            with open(task_file, 'a') as f: f.write(f"match_bet_{today_key}\n")
-
-        # 3. סיום משחק (FT)
-        if match['status'] == 'FT' and f"match_end_{today_key}" not in tasks_done:
-            if match['my_score'] > match['opp_score']:
-                chant = random.choice(WIN_CHANTS)
-                res_msg = f"{chant}\n\nיופי הפועללל, איזה נצחון גדול.\nהבאנו 3 נקודות חשובות.\nיאלללה הפועל 💙"
-            elif match['my_score'] == match['opp_score']:
-                res_msg = "תיקו בסיום המשחק של הפועל, ממשיכים הלאה בכל הכוח\nיאללה הפועללללל 💙"
-            else:
-                res_msg = "הפסד כואב של הפועל, לא נורא הפועל להרים את הראש.\nממשיכים הלאה חזק, קדימה הפועל מלחמההה 💙"
-            
-            markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": "https://www.football.co.il/leagues/israeli-premier-league/table"}]]}
-            send_to_all(res_msg, reply_markup=markup)
-            
-            print("⏳ מחכה 10 דקות לסקר...", flush=True)
-            time.sleep(600)
-            players = get_match_players(match['id'])
-            send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False})
-            with open(task_file, 'a') as f: f.write(f"match_end_{today_key}\n")
-
-    # 4. פינת היסטוריה (רביעי ב-12:00)
-    if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
-        hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה מהתאריך הנוכחי או השבוע הזה בעבר. עברית, מרגש.")
-        if hist:
-            send_to_all(f"📚 **פינת ההיסטוריה השבועית** 📚\n\n{hist}")
-            with open(task_file, 'a') as f: f.write(f"hist_{today_key}\n")
-
-    # 5. סריקת RSS רגילה
+    # --- 1. בדיקת RSS (כתבות) - קודם כל כדי שהבדיקה תהיה מהירה ---
     db_file, sum_db = "seen_links.txt", "recent_summaries.txt"
     if not os.path.exists(db_file): open(db_file, 'w').close()
     if not os.path.exists(sum_db): open(sum_db, 'w', encoding='utf-8').close()
@@ -197,6 +152,54 @@ def main():
                     with open(db_file, 'a') as f: f.write(entry.link + "\n")
                     with open(sum_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
                     time.sleep(5)
+
+    # --- 2. לוגיקת משחקים (Match Logic) ---
+    match = check_match_status()
+    if match:
+        # Match Day (עד 12:00)
+        if now.hour < 12 and f"match_poster_{today_key}" not in tasks_done:
+            poster_prompt = f"Cinematic football poster: Hapoel Petah Tikva vs {match['opp_name']}, blue and white colors, stadium atmosphere."
+            img_prompt = get_ai_response(f"Translate to an image generation prompt: {poster_prompt}")
+            url = f"https://pollinations.ai/p/{img_prompt.replace(' ', '%20')}" if img_prompt else "https://hapoelpt.com/static/media/logo.png"
+            text = "Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️"
+            send_to_all(text, photo_url=url)
+            with open(task_file, 'a') as f: f.write(f"match_poster_{today_key}\n")
+
+        # הימורים (15:00)
+        if now.hour == 15 and f"match_bet_{today_key}" not in tasks_done:
+            send_to_all("", is_poll=True, poll_data={
+                "question": f"איך יסתיים המשחק היום מול {match['opp_name']}?",
+                "options": ["ניצחון כחול 💙", "תיקו", "הפסד (חס וחלילה)"],
+                "is_anonymous": False
+            })
+            with open(task_file, 'a') as f: f.write(f"match_bet_{today_key}\n")
+
+        # סיום משחק (FT)
+        if match['status'] == 'FT' and f"match_end_{today_key}" not in tasks_done:
+            if match['my_score'] > match['opp_score']:
+                chant = random.choice(WIN_CHANTS)
+                res_msg = f"{chant}\n\nיופי הפועללל, איזה נצחון גדול.\nהבאנו 3 נקודות חשובות.\nיאלללה הפועל 💙"
+            elif match['my_score'] == match['opp_score']:
+                res_msg = "תיקו בסיום המשחק של הפועל, ממשיכים הלאה בכל הכוח\nיאללה הפועללללל 💙"
+            else:
+                res_msg = "הפסד כואב של הפועל, לא נורא הפועל להרים את הראש.\nממשיכים הלאה חזק, קדימה הפועל מלחמההה 💙"
+            
+            markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": "https://www.football.co.il/leagues/israeli-premier-league/table"}]]}
+            send_to_all(res_msg, reply_markup=markup)
+            
+            print("⏳ מחכה 10 דקות לסקר...", flush=True)
+            time.sleep(600)
+            players = get_match_players(match['id'])
+            send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False})
+            with open(task_file, 'a') as f: f.write(f"match_end_{today_key}\n")
+
+    # --- 3. פינת היסטוריה (רביעי ב-12:00) ---
+    if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
+        hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה מהתאריך הנוכחי או השבוע הזה בעבר. עברית, מרגש.")
+        if hist:
+            send_to_all(f"📚 **פינת ההיסטוריה השבועית** 📚\n\n{hist}")
+            with open(task_file, 'a') as f: f.write(f"hist_{today_key}\n")
+
     print("🏁 סיום.")
 
 if __name__ == "__main__":
