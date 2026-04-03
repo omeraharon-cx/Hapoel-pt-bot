@@ -35,7 +35,7 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# --- פונקציות ניהול מנויים (עובד!) ---
+# --- פונקציות ניהול מנויים ---
 
 def get_subscribers():
     sub_file = "subscribers.txt"
@@ -45,7 +45,8 @@ def get_subscribers():
         return list(set(line.strip() for line in f if line.strip()))
 
 def update_subscribers():
-    print("DEBUG: בודק מצטרפים חדשים בטלגרם...")
+    """בודק בטלגרם אם יש משתמשים חדשים ששלחו /start"""
+    print("DEBUG: בודק מצטרפים חדשים בטלגרם...", flush=True)
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         response = requests.get(url, timeout=10)
@@ -70,7 +71,7 @@ def update_subscribers():
 
 def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_url=None):
     subs = get_subscribers()
-    print(f"DEBUG: שולח ל-{len(subs)} רשומים...")
+    print(f"DEBUG: שולח ל-{len(subs)} רשומים...", flush=True)
     for cid in subs:
         try:
             if is_poll:
@@ -82,14 +83,20 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
         except Exception as e: print(f"❌ שגיאת טלגרם: {e}")
 
 def get_ai_response(prompt, attempt=0):
-    # רשימת דגמים לניסוי - גוגל משנים שמות ב-2026
-    models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"]
+    """מנסה דגמים שונים של Gemini שמתאימים לשנת 2026"""
+    if not GEMINI_API_KEY:
+        print("❌ שגיאה: GEMINI_API_KEY חסר ב-Secrets!")
+        return None
+
+    # מנסים קודם את המודלים של 2.0 (הסטנדרט ב-2026) ואז את הישנים יותר
+    models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-pro"]
     if attempt >= len(models): return None
     
     current_model = models[attempt]
-    print(f"DEBUG: פונה ל-Gemini (דגם {current_model})...")
+    print(f"DEBUG: פונה ל-Gemini (דגם {current_model})...", flush=True)
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={GEMINI_API_KEY}"
+    # ב-2026 משתמשים בגרסה היציבה v1
+    url = f"https://generativelanguage.googleapis.com/v1/models/{current_model}:generateContent?key={GEMINI_API_KEY}"
     
     safety = [{"category": c, "threshold": "BLOCK_NONE"} for c in ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]]
     
@@ -100,8 +107,9 @@ def get_ai_response(prompt, attempt=0):
         if res.status_code == 200 and 'candidates' in data:
             return data['candidates'][0]['content']['parts'][0]['text'].strip()
         
+        # אם קיבלנו 404, המודל הזה כנראה הוסר מהשרת - מנסים את הבא בתור
         if res.status_code == 404:
-            print(f"⚠️ דגם {current_model} לא נמצא (404). מנסה דגם הבא...")
+            print(f"⚠️ דגם {current_model} לא נמצא (404). מנסה דגם חלופי...")
             return get_ai_response(prompt, attempt + 1)
             
         print(f"❌ שגיאת API ({res.status_code}): {data}")
@@ -118,7 +126,6 @@ def get_full_article_text(url):
         soup = BeautifulSoup(res.content, 'html.parser')
         for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']): s.decompose()
         text = " ".join([t.get_text().strip() for t in soup.find_all(['p', 'h1', 'h2', 'h3']) if len(t.get_text()) > 25])
-        print(f"DEBUG: נשלפו {len(text)} תווים.")
         return text
     except: return ""
 
@@ -134,7 +141,7 @@ def get_match_players(fixture_id):
     except: return ["עומר כץ", "רם לוי", "דרור ניר", "רוי נאווי", "מתן פלג", "אופק אושר", "מתן גושה", "שחקן אחר"]
 
 def check_match_status():
-    print("DEBUG: בודק RapidAPI...")
+    print("DEBUG: בודק RapidAPI...", flush=True)
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
     params = {"team": TEAM_ID, "date": datetime.now().strftime('%Y-%m-%d')}
@@ -185,8 +192,7 @@ def main():
             if any(k in entry.title.lower() for k in h_keys) or "hapoelpt.com" in link:
                 print(f"🎯 נמצאה כתבה: {entry.title}")
                 content = get_full_article_text(link)
-                prompt = f"Summarize in 3 Hebrew sentences about Hapoel Petah Tikva. TEXT: {content[:2000]}"
-                summary = get_ai_response(prompt)
+                summary = get_ai_response(f"Summarize in 3 Hebrew sentences about Hapoel Petah Tikva. TEXT: {content[:2000]}")
                 
                 if summary and "SKIP" not in summary.upper():
                     print(f"✅ שולח לטלגרם: {entry.title}")
