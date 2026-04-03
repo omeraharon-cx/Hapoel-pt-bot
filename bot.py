@@ -48,20 +48,44 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
             if is_poll:
                 res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json={"chat_id": cid, **poll_data}, timeout=10)
             elif photo_url:
-                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown"}, timeout=15)
+                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=15)
             else:
-                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown"}, timeout=10)
+                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
             print(f"DEBUG: תגובת טלגרם: {res.status_code}")
         except Exception as e: print(f"DEBUG ERROR טלגרם: {e}")
 
 def get_ai_response(prompt):
     print("DEBUG: פונה ל-Gemini...")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    # הגדרות בטיחות - אומרים ל-AI לא לחסום תוכן ספורט
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    ]
+    
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "safetySettings": safety_settings
+    }
+    
     try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
-        return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        res = requests.post(url, json=payload, timeout=25)
+        data = res.json()
+        
+        if res.status_code != 200:
+            print(f"DEBUG ERROR: Gemini API {res.status_code}: {res.text}")
+            return None
+            
+        if 'candidates' not in data or not data['candidates']:
+            print(f"DEBUG ERROR: No candidates in response. Full data: {data}")
+            return None
+            
+        return data['candidates'][0]['content']['parts'][0]['text'].strip()
     except Exception as e:
-        print(f"DEBUG ERROR Gemini: {e}")
+        print(f"DEBUG ERROR Gemini Exception: {e}")
         return None
 
 def get_full_article_text(url):
@@ -77,6 +101,20 @@ def get_full_article_text(url):
     except Exception as e:
         print(f"DEBUG ERROR Scraping: {e}")
         return ""
+
+def get_match_players(fixture_id):
+    print(f"DEBUG: שואב שחקנים למשחק {fixture_id}...")
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/players"
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
+    params = {"fixture": fixture_id, "team": TEAM_ID}
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=15).json()
+        players_data = res['response'][0]['players']
+        played = [p['player']['name'] for p in players_data if (p['statistics'][0]['games']['minutes'] or 0) > 0]
+        return played[:10]
+    except Exception as e:
+        print(f"DEBUG ERROR Players API: {e}")
+        return ["עומר כץ", "רם לוי", "דרור ניר", "רוי נאווי", "מתן פלג", "אופק אושר", "מתן גושה", "שחקן אחר"]
 
 def check_match_status():
     print("DEBUG: בודק RapidAPI לסטטוס משחק...")
@@ -122,7 +160,6 @@ def main():
         for entry in feed.entries:
             if entry.link in history: continue
             
-            # בדיקה אם רלוונטי
             is_relevant = any(k in entry.title.lower() for k in h_keys) or "hapoelpt.com" in entry.link
             
             if is_relevant:
@@ -135,7 +172,6 @@ def main():
                     send_to_all(f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({entry.link})")
                     with open(sum_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
             
-            # תמיד שומרים כדי לא לחזור על זה
             history.add(entry.link)
             with open(db_file, 'a') as f: f.write(entry.link + "\n")
 
@@ -143,7 +179,6 @@ def main():
     print("⚽️ שלב 2: בדיקת משחקים")
     match = check_match_status()
     if match:
-        # Match Day (בוקר)
         if now.hour < 12 and f"match_poster_{today_key}" not in tasks_done:
             print("🎨 מפעיל לוגיקת פוסטר")
             p_prompt = f"Match day poster Hapoel Petah Tikva vs {match['opp_name']}, blue/white, cinematic"
@@ -153,13 +188,11 @@ def main():
                 send_to_all("Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️", photo_url=url)
                 with open(task_file, 'a') as f: f.write(f"match_poster_{today_key}\n")
 
-        # הימורים (15:00)
         if now.hour == 15 and f"match_bet_{today_key}" not in tasks_done:
             print("🗳 מפעיל לוגיקת הימורים")
             send_to_all("", is_poll=True, poll_data={"question": f"איך יסתיים המשחק היום מול {match['opp_name']}?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד (חס וחלילה)"], "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"match_bet_{today_key}\n")
 
-        # סיום משחק
         if match['status'] == 'FT' and f"match_end_{today_key}" not in tasks_done:
             print("🏁 זיהוי סיום משחק!")
             if match['my_score'] > match['opp_score']:
@@ -172,10 +205,10 @@ def main():
             markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": "https://www.football.co.il/leagues/israeli-premier-league/table"}]]}
             send_to_all(msg, reply_markup=markup)
             
-            # המתנה לסקר
             print("⏳ מחכה 10 דקות לסקר...")
             time.sleep(600)
-            # (שאר הלוגיקה של הסקר...)
+            players = get_match_players(match['id'])
+            send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"match_end_{today_key}\n")
 
     print("🏁 סיום.")
