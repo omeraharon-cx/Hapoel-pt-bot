@@ -58,12 +58,38 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
 def get_ai_response(prompt):
     print("DEBUG: פונה ל-Gemini...")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    safety = [{"category": c, "threshold": "BLOCK_NONE"} for c in ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]]
+    
+    safety = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    ]
+    
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "safetySettings": safety
+    }
+    
     try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}, timeout=25).json()
-        return res['candidates'][0]['content']['parts'][0]['text'].strip()
+        response = requests.post(url, json=payload, timeout=25)
+        
+        # אם יש שגיאה מהשרת של גוגל
+        if response.status_code != 200:
+            print(f"❌ שגיאת API (סטטוס {response.status_code}): {response.text}")
+            return None
+            
+        data = response.json()
+        
+        # בדיקה אם התשובה קיימת במבנה
+        if 'candidates' in data and data['candidates']:
+            return data['candidates'][0]['content']['parts'][0]['text'].strip()
+        else:
+            print(f"⚠️ גוגל לא החזיר תשובה. תגובה מלאה מהשרת: {data}")
+            return None
+            
     except Exception as e:
-        print(f"❌ שגיאת AI: {e}")
+        print(f"❌ שגיאת AI כללית: {e}")
         return None
 
 def get_full_article_text(url):
@@ -96,6 +122,7 @@ def check_match_status():
         res = requests.get(url, headers=headers, params=params, timeout=15).json()
         if res.get('results', 0) > 0:
             m = res['response'][0]
+            print(f"DEBUG: נמצא משחק! סטטוס: {m['fixture']['status']['short']}")
             is_home = str(m['teams']['home']['id']) == TEAM_ID
             return {
                 "id": m['fixture']['id'], 
@@ -104,7 +131,9 @@ def check_match_status():
                 "opp_score": m['goals']['away'] if is_home else m['goals']['home'], 
                 "opp_name": m['teams']['away']['name'] if is_home else m['teams']['home']['name']
             }
-    except: return None
+    except Exception as e:
+        print(f"❌ שגיאת RapidAPI: {e}")
+        return None
 
 # --- פונקציה ראשית ---
 
@@ -131,8 +160,9 @@ def main():
         for entry in feed.entries:
             link = entry.link
             
-            # סינון לינקים לא קשורים (Finance וכו')
-            if any(junk in link.lower() for junk in ["finance", "lifestyle", "fashion", "money", "shopping"]):
+            # סינון לינקים "זבל" לפני שבכלל נוגעים בהם
+            junk_words = ["finance", "lifestyle", "fashion", "money", "shopping", "promoted"]
+            if any(junk in link.lower() for junk in junk_words):
                 continue
             
             if link in history: continue
@@ -142,11 +172,13 @@ def main():
             if is_relevant:
                 print(f"🎯 נמצאה כתבה: {entry.title}")
                 content = get_full_article_text(link)
-                summary = get_ai_response(f"Summarize in 3 Hebrew sentences about Hapoel Petah Tikva. TEXT: {content[:2000]}")
+                prompt = f"Summarize this in 3 Hebrew sentences about Hapoel Petah Tikva. Return SKIP if not relevant. TEXT: {content[:2000]}"
+                summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
                     send_to_all(f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})")
                     with open(sum_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
+                    # שומרים רק אם הצלחנו לשלוח הודעה (או לפחות לעבד אותה)
                     with open(db_file, 'a') as f: f.write(link + "\n")
                     history.add(link)
 
@@ -189,14 +221,6 @@ def main():
             players = get_match_players(match['id'])
             send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"match_end_{today_key}\n")
-
-    # 3. פינת היסטוריה (רביעי ב-12:00)
-    if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
-        print("📚 פינת היסטוריה")
-        hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה. עברית.")
-        if hist:
-            send_to_all(f"📚 **פינת ההיסטוריה השבועית** 📚\n\n{hist}")
-            with open(task_file, 'a') as f: f.write(f"hist_{today_key}\n")
 
     print("🏁 סיום.")
 
