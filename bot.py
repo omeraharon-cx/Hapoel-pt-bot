@@ -35,7 +35,7 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-# --- פונקציות ניהול מנויים ---
+# --- פונקציות ניהול מנויים (עובד!) ---
 
 def get_subscribers():
     sub_file = "subscribers.txt"
@@ -45,8 +45,7 @@ def get_subscribers():
         return list(set(line.strip() for line in f if line.strip()))
 
 def update_subscribers():
-    """בודק בטלגרם אם יש משתמשים חדשים ששלחו /start"""
-    print("DEBUG: בודק מצטרפים חדשים בטלגרם...", flush=True)
+    print("DEBUG: בודק מצטרפים חדשים בטלגרם...")
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         response = requests.get(url, timeout=10)
@@ -67,11 +66,11 @@ def update_subscribers():
             if not new_found: print("DEBUG: אין מנויים חדשים.")
     except Exception as e: print(f"❌ שגיאה בעדכון מנויים: {e}")
 
-# --- פונקציות עזר ---
+# --- פונקציות עזר ושליחה ---
 
 def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_url=None):
     subs = get_subscribers()
-    print(f"DEBUG: שולח ל-{len(subs)} רשומים...", flush=True)
+    print(f"DEBUG: שולח ל-{len(subs)} רשומים...")
     for cid in subs:
         try:
             if is_poll:
@@ -82,38 +81,45 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
         except Exception as e: print(f"❌ שגיאת טלגרם: {e}")
 
-def get_ai_response(prompt, model="gemini-1.5-flash"):
-    """פונקציה משופרת לקבלת תשובה מה-AI עם טיפול בשגיאת 404"""
-    print(f"DEBUG: פונה ל-Gemini (דגם {model})...", flush=True)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+def get_ai_response(prompt, attempt=0):
+    # רשימת דגמים לניסוי - גוגל משנים שמות ב-2026
+    models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"]
+    if attempt >= len(models): return None
+    
+    current_model = models[attempt]
+    print(f"DEBUG: פונה ל-Gemini (דגם {current_model})...")
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={GEMINI_API_KEY}"
     
     safety = [{"category": c, "threshold": "BLOCK_NONE"} for c in ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]]
     
     try:
-        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}, timeout=25)
-        data = response.json()
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}, timeout=25)
+        data = res.json()
         
-        if response.status_code == 200 and 'candidates' in data and data['candidates']:
+        if res.status_code == 200 and 'candidates' in data:
             return data['candidates'][0]['content']['parts'][0]['text'].strip()
         
-        # אם קיבלנו 404 (דגם לא נמצא), ננסה אוטומטית דגם אחר
-        if response.status_code == 404 and model == "gemini-1.5-flash":
-            print("⚠️ דגם Flash לא נמצא, מנסה דגם Pro...", flush=True)
-            return get_ai_response(prompt, model="gemini-1.5-pro")
+        if res.status_code == 404:
+            print(f"⚠️ דגם {current_model} לא נמצא (404). מנסה דגם הבא...")
+            return get_ai_response(prompt, attempt + 1)
             
-        print(f"❌ שגיאת API (סטטוס {response.status_code}): {data}")
+        print(f"❌ שגיאת API ({res.status_code}): {data}")
         return None
     except Exception as e:
         print(f"❌ שגיאת AI כללית: {e}")
         return None
 
 def get_full_article_text(url):
+    print(f"DEBUG: שולף טקסט מ-{url}")
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(res.content, 'html.parser')
         for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']): s.decompose()
-        return " ".join([t.get_text().strip() for t in soup.find_all(['p', 'h1', 'h2', 'h3']) if len(t.get_text()) > 25])
+        text = " ".join([t.get_text().strip() for t in soup.find_all(['p', 'h1', 'h2', 'h3']) if len(t.get_text()) > 25])
+        print(f"DEBUG: נשלפו {len(text)} תווים.")
+        return text
     except: return ""
 
 def get_match_players(fixture_id):
@@ -128,7 +134,7 @@ def get_match_players(fixture_id):
     except: return ["עומר כץ", "רם לוי", "דרור ניר", "רוי נאווי", "מתן פלג", "אופק אושר", "מתן גושה", "שחקן אחר"]
 
 def check_match_status():
-    print("DEBUG: בודק RapidAPI...", flush=True)
+    print("DEBUG: בודק RapidAPI...")
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
     params = {"team": TEAM_ID, "date": datetime.now().strftime('%Y-%m-%d')}
@@ -166,7 +172,7 @@ def main():
 
     h_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
 
-    # 1. סריקת כתבות
+    # 1. RSS
     print("📰 שלב 1: סריקת כתבות RSS")
     for feed_url in RSS_FEEDS:
         print(f"📡 בודק פיד: {feed_url}")
@@ -179,24 +185,27 @@ def main():
             if any(k in entry.title.lower() for k in h_keys) or "hapoelpt.com" in link:
                 print(f"🎯 נמצאה כתבה: {entry.title}")
                 content = get_full_article_text(link)
-                summary = get_ai_response(f"Summarize in 3 Hebrew sentences about Hapoel Petah Tikva. TEXT: {content[:2000]}")
+                prompt = f"Summarize in 3 Hebrew sentences about Hapoel Petah Tikva. TEXT: {content[:2000]}"
+                summary = get_ai_response(prompt)
+                
                 if summary and "SKIP" not in summary.upper():
+                    print(f"✅ שולח לטלגרם: {entry.title}")
                     send_to_all(f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})")
                     with open(sum_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
                     with open(db_file, 'a') as f: f.write(link + "\n")
                     history.add(link)
 
-    # 2. לוגיקת משחקים
+    # 2. משחקים
     print("⚽️ שלב 2: בדיקת משחקים")
     match = check_match_status()
     if match:
         if now.hour < 12 and f"match_poster_{today_key}" not in tasks_done:
-            p_prompt = f"Match day poster Hapoel Petah Tikva vs {match['opp_name']}, blue/white theme, cinematic style."
-            img_desc = get_ai_response(f"Translate this to a DALL-E prompt in English: {p_prompt}")
+            print("🎨 מייצר פוסטר יום משחק...")
+            p_prompt = f"Match day poster Hapoel Petah Tikva vs {match['opp_name']}, blue theme, stadium atmosphere."
+            img_desc = get_ai_response(f"Translate to English DALL-E prompt: {p_prompt}")
             if img_desc:
                 url = f"https://pollinations.ai/p/{img_desc.replace(' ', '%20')}"
-                text = "Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️"
-                send_to_all(text, photo_url=url)
+                send_to_all("Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️", photo_url=url)
                 with open(task_file, 'a') as f: f.write(f"match_poster_{today_key}\n")
 
         if now.hour == 15 and f"match_bet_{today_key}" not in tasks_done:
@@ -220,8 +229,9 @@ def main():
             send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"match_end_{today_key}\n")
 
-    # 3. פינת היסטוריה (רביעי)
+    # 3. היסטוריה
     if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
+        print("📚 מפיק פינת היסטוריה...")
         hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה. עברית.")
         if hist:
             send_to_all(f"📚 **פינת ההיסטוריה השבועית** 📚\n\n{hist}")
