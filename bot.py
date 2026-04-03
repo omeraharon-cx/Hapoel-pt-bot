@@ -70,31 +70,20 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=15)
             else:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
-        except Exception as e: print(f"❌ שגיאת טלגרם: {e}")
+        except: pass
 
 def get_ai_response(prompt):
-    """גרסה משודרגת ל-2026 עם כתובת v1 יציבה"""
-    # המתנה כדי לא להיחסם
-    time.sleep(10) 
-    # שינוי הכתובת ל-v1 היציבה
+    # כתובת v1 היציבה ל-2026
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
     safety = [{"category": c, "threshold": "BLOCK_NONE"} for c in ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]]
-    
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}, timeout=25)
         data = res.json()
-        
         if res.status_code == 200 and 'candidates' in data:
             return data['candidates'][0]['content']['parts'][0]['text'].strip()
-        
-        # אם יש שגיאה, נדפיס אותה כדי לדעת למה גוגל כועס
-        print(f"⚠️ שגיאת AI מפורטת: {data.get('error', {}).get('message', 'Unknown error')}")
-        if res.status_code == 429: return "RATE_LIMIT"
+        print(f"⚠️ שגיאת AI: {data.get('error', {}).get('message', 'Unknown error')}")
         return None
-    except Exception as e:
-        print(f"❌ שגיאת AI: {e}")
-        return None
+    except: return None
 
 def get_full_article_text(url):
     try:
@@ -113,7 +102,8 @@ def get_match_players(fixture_id):
         res = requests.get(url, headers=headers, params=params, timeout=15).json()
         players = res['response'][0]['players']
         return [p['player']['name'] for p in players if (p['statistics'][0]['games']['minutes'] or 0) > 0][:10]
-    except: return ["עומר כץ", "רם לוי", "דרור ניר", "רוי נאווי", "מתן פלג", "אופק אושר", "מתן גושה", "שחקן אחר"]
+    except: 
+        return ["שחקן מהסגל", "שחקן אחר"]
 
 def check_match_status():
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
@@ -147,8 +137,8 @@ def main():
     with open(db_file, 'r') as f: history = set(f.read().splitlines())
     with open(task_file, 'r') as f: tasks_done = set(f.read().splitlines())
 
-    # --- שלב 1: כתבות RSS (סריקה עמוקה) ---
-    h_keys = ["הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה", "עומר כץ", "איתי שכטר", "אבי ריקן", "רם לוי"]
+    # --- שלב 1: כתבות RSS - המילים המדויקות שלך ---
+    h_keys = ["הפועל פ״ת", "הפועל פתח-תקוה", "הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל ״מבנה״ פתח-תקוה", "הכחולים", "המלאבסים", "הפועל פת"]
     
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
@@ -161,26 +151,30 @@ def main():
             full_text = get_full_article_text(link)
             combined_text = (entry.title + " " + full_text).lower()
             
+            # בדיקה אם יש קשר להפועל (לפי המילים שלך)
             if any(k in combined_text for k in h_keys) or "hapoelpt.com" in link:
-                print(f"🎯 נמצא קשר להפועל! מבקש סיכום...")
-                summary = get_ai_response(f"סכם ב-3 משפטים בעברית את הכתבה על הפועל פתח תקווה. טקסט: {full_text[:2500]}")
+                print(f"🎯 נמצא קשר להפועל! מבקש סינון חכם מה-AI...")
+                # ה-AI מקבל הוראה להבדיל בין הפועל למכבי
+                prompt = (f"Analyze this article about Israeli football. "
+                         f"If it is primarily about Hapoel Petah Tikva (the 'Blues') or mentions them as a key subject, summarize it in 3 Hebrew sentences. "
+                         f"If it is primarily about Maccabi Petah Tikva or another team and Hapoel is only mentioned in passing, return 'SKIP'. "
+                         f"TEXT: {full_text[:2500]}")
                 
-                if summary == "RATE_LIMIT":
-                    print("⚠️ ה-AI ברוויה, נעצור את הכתבות לריצה זו.")
-                    break
+                summary = get_ai_response(prompt)
                 
-                if summary:
+                if summary and "SKIP" not in summary.upper():
                     print(f"✅ שולח לטלגרם: {entry.title}")
                     send_to_all(f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})")
                     with open(db_file, 'a') as f: f.write(link + "\n")
                     history.add(link)
+                    time.sleep(10) # המתנה למניעת חסימה
 
     # --- שלב 2: יום משחק ---
     match = check_match_status()
     if match:
         if now.hour < 12 and f"poster_{today_key}" not in tasks_done:
             img_desc = get_ai_response(f"Translate to English: פוסטר יום משחק כדורגל, הפועל פתח תקווה נגד {match['opp_name']}, אווירה של אצטדיון.")
-            if img_desc and img_desc != "RATE_LIMIT":
+            if img_desc:
                 url = f"https://pollinations.ai/p/{img_desc.replace(' ', '%20')}"
                 send_to_all("Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️", photo_url=url)
                 with open(task_file, 'a') as f: f.write(f"poster_{today_key}\n")
@@ -205,10 +199,10 @@ def main():
             send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום?", "options": players, "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"end_{today_key}\n")
 
-    # --- שלב 3: היסטוריה ---
+    # --- שלב 3: היסטוריה (רביעי) ---
     if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
-        hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה. עברית.")
-        if hist and hist != "RATE_LIMIT":
+        hist = get_ai_response("סכם 3 אירועים היסטוריים משמעותיים של הפועל פתח תקווה השבוע בעבר. עברית.")
+        if hist:
             send_to_all(f"📚 **פינת ההיסטוריה השבועית**\n\n{hist}")
             with open(task_file, 'a') as f: f.write(f"hist_{today_key}\n")
 
