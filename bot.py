@@ -90,10 +90,11 @@ def get_full_article_text(url):
 def get_ai_summary(text, recent_summaries):
     if not text or len(text) < 100: return None
     
-    # המתנה של 10 שניות כדי לא להיחסם ע"י גוגל (מכסה חינמית)
-    time.sleep(10)
+    # המתנה קריטית למניעת חסימת 429 (מכסה חינמית)
+    time.sleep(12)
     
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # שימוש בכתובת v1beta ובדגם gemini-2.0-flash (היחיד שגוגל מוצא ב-2026)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     
     summaries_context = "\n".join([f"- {s}" for s in recent_summaries])
     prompt = (
@@ -109,15 +110,13 @@ def get_ai_summary(text, recent_summaries):
         data = response.json()
         
         if response.status_code != 200:
-            print(f"❌ שגיאת AI (סטטוס {response.status_code}): {data.get('error', {}).get('message', 'שגיאה לא ידועה')}")
+            print(f"❌ שגיאת AI (סטטוס {response.status_code}): {data.get('error', {}).get('message', 'Unknown error')}")
             return None
             
         summary = data['candidates'][0]['content']['parts'][0]['text'].strip()
         if "SKIP" in summary.upper() or "DUPLICATE" in summary.upper(): return "REJECTED"
         return summary
-    except Exception as e:
-        print(f"❌ תקלה בתקשורת עם ה-AI: {e}")
-        return None
+    except: return None
 
 # --- פונקציות כדורגל (RapidAPI) ---
 
@@ -151,14 +150,12 @@ def get_match_players(fixture_id):
 # --- ריצה ראשית ---
 
 def main():
-    print("🚀 סריקה התחילה (גרסת 2026 משולבת)...", flush=True)
+    print("🚀 סריקה התחילה (גרסת 2026 משולבת - בסיס 26.3)...", flush=True)
     now = datetime.now()
     today_key = now.strftime('%Y-%m-%d')
     
-    # 0. עדכון מנויים
     update_subscribers()
 
-    # 1. הכנת קבצים
     db_file, summary_db, task_file = "seen_links.txt", "recent_summaries.txt", "task_log.txt"
     for f in [db_file, summary_db, task_file]:
         if not os.path.exists(f): open(f, 'a').close()
@@ -199,7 +196,6 @@ def main():
                 if summary:
                     msg = f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     send_to_all(msg)
-                    print(f"✅ הודעה נשלחה בהצלחה: {title}")
                     with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                     with open(summary_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
                     time.sleep(5)
@@ -208,8 +204,7 @@ def main():
     match = check_match_status()
     if match:
         if now.hour < 12 and f"poster_{today_key}" not in tasks_done:
-            prompt = f"Describe a cinematic football matchday poster: Hapoel Petah Tikva vs {match['opp_name']}, blue and white theme."
-            img_desc = get_ai_summary(prompt, [])
+            img_desc = get_ai_summary(f"Describe a cinematic matchday poster: Hapoel Petah Tikva vs {match['opp_name']}, blue and white stadium.", [])
             if img_desc and "REJECTED" not in img_desc:
                 url = f"https://pollinations.ai/p/{img_desc.replace(' ', '%20')}"
                 send_to_all("Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️", photo_url=url)
@@ -237,8 +232,7 @@ def main():
 
     # 4. פינת היסטוריה (רביעי ב-12:00)
     if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
-        hist_prompt = "Tell a short, 3-sentence interesting historical fact about Hapoel Petah Tikva football club in Hebrew."
-        hist_text = get_ai_summary(hist_prompt, [])
+        hist_text = get_ai_summary("Tell a short, interesting historical fact about Hapoel Petah Tikva football club in Hebrew.", [])
         if hist_text and "REJECTED" not in hist_text:
             send_to_all(f"📚 **פינת ההיסטוריה השבועית**\n\n{hist_text}")
             with open(task_file, 'a') as f: f.write(f"hist_{today_key}\n")
