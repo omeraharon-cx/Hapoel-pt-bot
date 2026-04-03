@@ -89,7 +89,11 @@ def get_full_article_text(url):
 
 def get_ai_summary(text, recent_summaries):
     if not text or len(text) < 100: return None
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    # המתנה של 10 שניות כדי לא להיחסם ע"י גוגל (מכסה חינמית)
+    time.sleep(10)
+    
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     summaries_context = "\n".join([f"- {s}" for s in recent_summaries])
     prompt = (
@@ -101,11 +105,19 @@ def get_ai_summary(text, recent_summaries):
     )
 
     try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}]}, timeout=25).json()
-        summary = res['candidates'][0]['content']['parts'][0]['text'].strip()
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}]}, timeout=25)
+        data = response.json()
+        
+        if response.status_code != 200:
+            print(f"❌ שגיאת AI (סטטוס {response.status_code}): {data.get('error', {}).get('message', 'שגיאה לא ידועה')}")
+            return None
+            
+        summary = data['candidates'][0]['content']['parts'][0]['text'].strip()
         if "SKIP" in summary.upper() or "DUPLICATE" in summary.upper(): return "REJECTED"
         return summary
-    except: return None
+    except Exception as e:
+        print(f"❌ תקלה בתקשורת עם ה-AI: {e}")
+        return None
 
 # --- פונקציות כדורגל (RapidAPI) ---
 
@@ -134,7 +146,7 @@ def get_match_players(fixture_id):
         res = requests.get(url, headers=headers, params=params, timeout=15).json()
         players = res['response'][0]['players']
         return [p['player']['name'] for p in players if (p['statistics'][0]['games']['minutes'] or 0) > 0][:10]
-    except: return ["עומר כץ", "שחקן סגל", "שחקן אחר"]
+    except: return ["שחקן סגל", "שחקן אחר"]
 
 # --- ריצה ראשית ---
 
@@ -187,6 +199,7 @@ def main():
                 if summary:
                     msg = f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     send_to_all(msg)
+                    print(f"✅ הודעה נשלחה בהצלחה: {title}")
                     with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
                     with open(summary_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
                     time.sleep(5)
@@ -194,22 +207,18 @@ def main():
     # 3. לוגיקת יום משחק
     match = check_match_status()
     if match:
-        # פוסטר בבוקר
         if now.hour < 12 and f"poster_{today_key}" not in tasks_done:
-            # שימוש ב-Gemini לתרגום פרומפט לפוסטר
             prompt = f"Describe a cinematic football matchday poster: Hapoel Petah Tikva vs {match['opp_name']}, blue and white theme."
-            img_desc = get_ai_summary(prompt, []) # שימוש חוזר בפונקציית ה-AI
+            img_desc = get_ai_summary(prompt, [])
             if img_desc and "REJECTED" not in img_desc:
                 url = f"https://pollinations.ai/p/{img_desc.replace(' ', '%20')}"
                 send_to_all("Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️", photo_url=url)
                 with open(task_file, 'a') as f: f.write(f"poster_{today_key}\n")
 
-        # הימורים ב-15:00
         if now.hour == 15 and f"bet_{today_key}" not in tasks_done:
             send_to_all("", is_poll=True, poll_data={"question": f"איך יסתיים המשחק מול {match['opp_name']}?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד"], "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"bet_{today_key}\n")
 
-        # סיום משחק
         if match['status'] == 'FT' and f"end_{today_key}" not in tasks_done:
             if match['my_score'] > match['opp_score']:
                 res_msg = f"{random.choice(WIN_CHANTS)}\n\nיופי הפועללל, איזה נצחון גדול! 💙"
@@ -221,7 +230,6 @@ def main():
             markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": "https://www.football.co.il/leagues/israeli-premier-league/table"}]]}
             send_to_all(res_msg, reply_markup=markup)
             
-            # סקר MVP אחרי 10 דקות (בצורה שתתאים לריצה הבאה של הסקריפט)
             time.sleep(600)
             players = get_match_players(match['id'])
             send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום?", "options": players, "is_anonymous": False})
@@ -229,7 +237,6 @@ def main():
 
     # 4. פינת היסטוריה (רביעי ב-12:00)
     if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
-        # בקשה ל-AI לסיפור היסטורי
         hist_prompt = "Tell a short, 3-sentence interesting historical fact about Hapoel Petah Tikva football club in Hebrew."
         hist_text = get_ai_summary(hist_prompt, [])
         if hist_text and "REJECTED" not in hist_text:
