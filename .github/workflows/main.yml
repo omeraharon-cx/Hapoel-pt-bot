@@ -2,19 +2,19 @@ name: Hapoel Updates Timer
 
 on:
   schedule:
-    - cron: '*/45 * * * *' # הרצה כל 45 דקות בדיוק
-  workflow_dispatch: # מאפשר לנו להריץ את הבוט ידנית לבדיקה
+    - cron: '*/45 * * * *' 
+  workflow_dispatch: 
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # מאפשר לבוט לעדכן את קבצי ההיסטוריה והמנויים
+      contents: write 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # מוודא שמורידים את כל ההיסטוריה למניעת בעיות ב-Push
+          fetch-depth: 0 
 
       - name: Set up Python
         uses: actions/setup-python@v5
