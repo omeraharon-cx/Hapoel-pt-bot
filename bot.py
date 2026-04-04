@@ -33,23 +33,20 @@ RSS_FEEDS = [
 
 HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "מבנה"]
 
-# מפת תרגום שחקנים מעודכנת לסגל 2026
+# מפת תרגום שחקנים מעודכנת (לפי הרשימה שסיפקת)
 PLAYER_MAP = {
-    "Omer Katz": "עומר כץ", "Amit Mashiah": "עמית משיח", "Shahar Amsalem": "שחר אמסלם",
-    "Alex Moussounda": "אלכס מוסנדה", "Matan Gosha": "מתן גושה", "Roee Ben Navia": "רוי בן נביא",
-    "Noam Cohen": "נועם כהן", "Yaer Zambrovski": "יער זמברובסקי", "Orel Dgani": "אוראל דגני",
-    "Dror Nir": "דרור ניר", "Idan Cohen": "עידן כהן", "Itay Rotman": "איתי רוטמן",
-    "Shahar Rosen": "שחר רוזן", "Roee David": "רועי דוד", "Nadav Niddam": "נדב נידם",
-    "Ari Cohen": "ארי כהן", "Tomer Altman": "תומר אלטמן", "Boni Amians": "בוני אמיאן",
-    "Noam Kahon": "נועם כחון", "Orel Baye": "אוראל באייה", "Chipuoka Songa": "צ'יפווקה סונגה",
-    "Yonatan Cohen": "יונתן כהן", "Mark Costa": "מארק קוסטה", "Shavit Mazal": "שביט מזל",
-    "Andrade Euclides Claye": "אנדרדה קליי", "Mamadi Diarra": "ממאדי דיארה"
+    "Omer Katz": "עומר כץ", "Shahar Rosen": "שחר רוזן", "Dror Nir": "דרור ניר",
+    "Itay Rotman": "איתי רוטמן", "Orel Dgani": "אוראל דגני", "Alex Moussounda": "מוסונדה",
+    "Idan Cohen": "עידן כהן", "Noam Cohen": "נועם כהן", "Tomer Altman": "תומר אלטמן",
+    "Nadav Niddam": "נדב נידם", "Roee David": "רועי דוד", "Ari Cohen": "ארי כהן",
+    "Mamadi Diarra": "ממאדי דיארה", "Yonatan Cohen": "יונתן כהן", "Andrade Euclides Claye": "קליי",
+    "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
 }
 
-WIN_CHANTS = [
-    "אמרו לו הפועל אז הלך לאורווה, אמרו לו מכבי אז הוא צעק ש-אה! 💙",
-    "מי שלא קופץ לוזון! 💙",
-    "אלך אחריך גם עד סוף העולם! 💙"
+# רשימת גיבוי (השחקנים שמשחקים בדרך כלל)
+DEFAULT_PLAYERS = [
+    "עומר כץ", "אוראל דגני", "איתי רוטמן", "דרור ניר", "עידן כהן", 
+    "נדב נידם", "רועי דוד", "יונתן כהן", "מארק קוסטה", "שביט מזל", "קליי"
 ]
 
 def get_israel_time():
@@ -75,6 +72,7 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_
             payload.update({"text": text, "reply_markup": reply_markup})
             r = requests.post(f"{url_base}/sendMessage", json=payload, timeout=10)
         print(f"DEBUG: Telegram Status {r.status_code}")
+        if r.status_code != 200: print(f"DEBUG ERROR DETAILS: {r.text}")
         return r.status_code == 200
     except Exception as e:
         print(f"DEBUG ERROR Telegram: {e}")
@@ -85,19 +83,20 @@ def get_ai_summary(text, title, recent_summaries):
     context = "\n".join(recent_summaries)
     prompt = (
         f"אתה עיתונאי ספורט עבור אוהדי הפועל פתח תקווה. "
-        f"כתוב תקציר של 4-5 משפטים על הכתבה. התמקד רק במידע שרלוונטי להפועל פתח תקווה. "
+        f"כתוב תקציר של 4-5 משפטים על הכתבה הבאה. התמקד רק במידע שרלוונטי להפועל פתח תקווה. "
         f"אל תחזור על מידע מהעדכונים האלו: {context}. "
         f"אם הכתבה לא קשורה להפועל פתח תקווה, כתוב רק: SKIP\n"
         f"טקסט: {text[:3500]}"
     )
     try:
-        # שימוש במודל יציב יותר
+        # שימוש במודל gemini-1.5-flash-latest בכתובת המעודכנת
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
         res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         if res.status_code == 200:
             result = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             return result if "SKIP" not in result.upper() else None
-        else: print(f"DEBUG Gemini Error: {res.status_code}")
+        else:
+            print(f"DEBUG Gemini Error {res.status_code}: {res.text}")
     except: pass
     return None
 
@@ -113,9 +112,8 @@ def get_match_data():
                 dt = datetime.fromtimestamp(event['startTimestamp']).strftime('%Y-%m-%d')
                 if dt in dates_to_check:
                     is_home = str(event['homeTeam']['id']) == TEAM_ID
-                    opp = event['awayTeam']['name'] if is_home else event['homeTeam']['name']
                     return {
-                        "id": event['id'], "opp": opp, "status": event.get('status', {}).get('type'),
+                        "id": event['id'], "status": event.get('status', {}).get('type'),
                         "date": dt, "my_score": event.get('homeScore', {}).get('display', 0) if is_home else event.get('awayScore', {}).get('display', 0),
                         "opp_score": event.get('awayScore', {}).get('display', 0) if is_home else event.get('homeScore', {}).get('display', 0)
                     }
@@ -129,16 +127,14 @@ def get_mvp_players(event_id):
         res = requests.get(url, headers=headers, timeout=10).json()
         side = 'home' if str(res.get('home', {}).get('team', {}).get('id')) == TEAM_ID else 'away'
         team_data = res.get(side, {})
-        # לוקחים את ה-11 שפתחו + 3 המחליפים הראשונים (כדי שיהיו אלו ששיחקו)
-        starters = [p['player']['name'] for p in team_data.get('lineup', [])]
-        subs = [p['player']['name'] for p in team_data.get('substitutes', [])]
-        played_english = (starters + subs)[:12]
+        # אוספים את כל מי ששיחק (הרכב + מחליפים)
+        players_in_game = [p['player']['name'] for p in team_data.get('lineup', [])]
+        players_in_game += [p['player']['name'] for p in team_data.get('substitutes', []) if p.get('statistics', {}).get('minutesPlayed', 0) > 0]
         
-        # תרגום לעברית
-        translated = [PLAYER_MAP.get(name, name) for name in played_english]
-        return list(dict.fromkeys(translated))[:10] # מקסימום 10 לסקר
+        translated = [PLAYER_MAP.get(name, name) for name in players_in_game]
+        if translated: return list(dict.fromkeys(translated))[:10]
     except: pass
-    return ["עומר כץ", "מתן גושה", "אוראל דגני", "שחר רוזן", "נדב נידם", "רועי דוד", "יונתן כהן", "מארק קוסטה", "שביט מזל", "סונגה"]
+    return DEFAULT_PLAYERS
 
 def main():
     now = get_israel_time()
@@ -155,6 +151,7 @@ def main():
     if match:
         m_date = match['date']
         if match['status'] in ['finished', 'FT']:
+            # הודעת סיום (רק אם לא נשלחה היום)
             if f"final_msg_{m_date}" not in tasks:
                 txt = f"סיום המשחק! התוצאה: {match['my_score']}-{match['opp_score']}."
                 markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": LEAGUE_TABLE_URL}]]}
@@ -162,6 +159,7 @@ def main():
                     with open(task_file, 'a') as f: f.write(f"final_msg_{m_date}:{now.strftime('%H:%M')}\n")
                     tasks.add(f"final_msg_{m_date}:{now.strftime('%H:%M')}")
 
+            # סקר MVP (10 דקות אחרי)
             final_task = [t for t in tasks if t.startswith(f"final_msg_{m_date}:")]
             if final_task and f"mvp_poll_{m_date}" not in tasks:
                 time_parts = final_task[0].split(":")[-2:]
@@ -177,9 +175,8 @@ def main():
         feed = feedparser.parse(url)
         for entry in feed.entries[:8]:
             if entry.link in history: continue
-            headers = {'User-Agent': 'Mozilla/5.0'}
             try:
-                res = requests.get(entry.link, headers=headers, timeout=10)
+                res = requests.get(entry.link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
                 soup = BeautifulSoup(res.content, 'html.parser')
                 full_text = " ".join([p.get_text() for p in soup.find_all('p')])
                 if any(k in (entry.title + full_text) for k in HAPOEL_KEYS):
@@ -191,7 +188,9 @@ def main():
                             with open(db_file, "a") as f: f.write(entry.link + "\n")
                             with open(sum_db, "a", encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
                             history.add(entry.link)
-            except: continue
+                    else: print(f"DEBUG: AI skipped summary for {entry.title}")
+            except Exception as e: 
+                print(f"DEBUG Error scanning {entry.link}: {e}")
     print("--- סיום ---")
 
 if __name__ == "__main__": main()
