@@ -6,7 +6,7 @@ import time
 import sys
 import random
 import urllib.parse
-import html # הוסף לייבוא
+import html
 from datetime import datetime, timedelta
 
 # הגדרה להדפסה מיידית ללוגים
@@ -51,25 +51,20 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def escape_html(text):
-    """מנקה טקסט כדי שלא ישבור את פורמט ה-HTML של טלגרם"""
     if not text: return ""
     return html.escape(text)
 
 def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_markup=None):
     url_base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
     try:
-        # שינינו ל-HTML כי Markdown נוטה להישבר
         payload = {"chat_id": ADMIN_ID, "parse_mode": "HTML"}
-        
         if is_poll:
-            # ניקוי אופציות הסקר מתווים בעייתיים
             poll_data["options"] = [str(opt)[:100] for opt in poll_data["options"]]
             r = requests.post(f"{url_base}/sendPoll", json={**payload, **poll_data}, timeout=10)
         elif photo_url:
             payload.update({"photo": photo_url, "caption": text, "reply_markup": reply_markup})
             r = requests.post(f"{url_base}/sendPhoto", json=payload, timeout=15)
             if r.status_code != 200:
-                print(f"DEBUG: Photo failed, trying simple text. Error: {r.text}")
                 r = requests.post(f"{url_base}/sendMessage", json={"chat_id": ADMIN_ID, "text": text, "parse_mode": "HTML", "reply_markup": reply_markup})
         else:
             payload.update({"text": text, "reply_markup": reply_markup})
@@ -77,10 +72,10 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_
         
         print(f"DEBUG: Telegram Status {r.status_code}")
         if r.status_code != 200:
-            print(f"DEBUG ERROR DETAILS: {r.text}") # כאן נראה בדיוק למה טלגרם כועס
+            print(f"DEBUG ERROR DETAILS: {r.text}")
         return r.status_code == 200
     except Exception as e:
-        print(f"DEBUG ERROR Telegram Exception: {e}")
+        print(f"DEBUG ERROR Telegram: {e}")
         return False
 
 def get_full_article_text(url):
@@ -104,7 +99,8 @@ def get_ai_summary(text, title, recent_summaries):
         f"טקסט הכתבה: {text[:3500]}"
     )
     try:
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # עדכון לגרסה v1 שפותר את שגיאת ה-404
+        api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         if res.status_code == 200:
             result = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
@@ -117,19 +113,23 @@ def get_ai_summary(text, title, recent_summaries):
 
 def get_match_data():
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
-    today = get_israel_time().strftime('%Y-%m-%d')
+    now_il = get_israel_time()
+    # בודקים משחקים של היום ושל אתמול (חשוב למעברי חצות)
+    dates_to_check = [now_il.strftime('%Y-%m-%d'), (now_il - timedelta(days=1)).strftime('%Y-%m-%d')]
+    
     for endpoint in ["next", "last"]:
         try:
             url = f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/{endpoint}/0"
             res = requests.get(url, headers=headers, timeout=10).json()
             for event in res.get('events', []):
                 dt = datetime.fromtimestamp(event['startTimestamp']).strftime('%Y-%m-%d')
-                if dt == today:
+                if dt in dates_to_check:
                     is_home = str(event['homeTeam']['id']) == TEAM_ID
                     opp_raw = event['awayTeam']['name'] if is_home else event['homeTeam']['name']
                     return {
                         "id": event['id'], "opp": TEAM_TRANSLATIONS.get(opp_raw, opp_raw),
                         "status": event.get('status', {}).get('type'),
+                        "date": dt,
                         "my_score": event.get('homeScore', {}).get('display', 0) if is_home else event.get('awayScore', {}).get('display', 0),
                         "opp_score": event.get('awayScore', {}).get('display', 0) if is_home else event.get('homeScore', {}).get('display', 0)
                     }
@@ -145,11 +145,10 @@ def get_mvp_players(event_id):
         players = [p['player']['name'] for p in res.get(side, {}).get('lineup', [])]
         if not players: raise Exception("No players found")
         return players[:10]
-    except: return ["עומר כץ", "רם לוי", "מתן גושה", "דרור ניר", "רועי דוד"]
+    except: return ["עומר כץ", "רם לוי", "מתן גושה", "דרור ניר", "רועי דוד", "גולן בני", "אביב סלם", "עידן ורד"]
 
 def main():
     now = get_israel_time()
-    today_str = now.strftime('%Y-%m-%d')
     print(f"--- ריצה: {now.strftime('%H:%M:%S')} ---")
 
     db_file, task_file, sum_db = "seen_links.txt", "task_log.txt", "recent_summaries.txt"
@@ -160,26 +159,27 @@ def main():
     with open(db_file, 'r') as f: history = set(line.strip() for line in f if line.strip())
     with open(sum_db, 'r', encoding='utf-8') as f: recent = f.read().splitlines()[-15:]
 
-    # 1. ניהול משחק
     match = get_match_data()
     if match:
-        # פוסטר
-        if now.hour >= 8 and f"matchday_{today_str}" not in tasks:
-            msg = f"<b>MATCH DAY!</b> 💙\n\nהפועל שלנו מול {escape_html(match['opp'])}\nמביאים 3 נקודות בעזרת השם.\n\nיאללה הפועל! ⚽️"
-            if send_to_telegram(msg, photo_url=HAPOEL_LOGO_URL):
-                with open(task_file, 'a') as f: f.write(f"matchday_{today_str}\n")
+        m_date = match['date']
         
-        # הימורים
-        if now.hour >= 15 and f"betting_{today_str}" not in tasks:
-            poll = {"question": f"הימור שלכם מול {match['opp']}?", "options": ["ניצחון 💙", "תיקו", "הפסד"], "is_anonymous": False}
-            if send_to_telegram("", is_poll=True, poll_data=poll):
-                with open(task_file, 'a') as f: f.write(f"betting_{today_str}\n")
+        # פוסטר (רק ביום המשחק עצמו)
+        if now.strftime('%Y-%m-%d') == m_date:
+            if now.hour >= 8 and f"matchday_{m_date}" not in tasks:
+                msg = f"<b>MATCH DAY!</b> 💙\n\nהפועל שלנו מול {escape_html(match['opp'])}\nמביאים 3 נקודות בעזרת השם.\n\nיאללה הפועל! ⚽️"
+                if send_to_telegram(msg, photo_url=HAPOEL_LOGO_URL):
+                    with open(task_file, 'a') as f: f.write(f"matchday_{m_date}\n")
+            
+            if now.hour >= 15 and f"betting_{m_date}" not in tasks:
+                poll = {"question": f"הימור שלכם מול {match['opp']}?", "options": ["ניצחון 💙", "תיקו", "הפסד"], "is_anonymous": False}
+                if send_to_telegram("", is_poll=True, poll_data=poll):
+                    with open(task_file, 'a') as f: f.write(f"betting_{m_date}\n")
 
-        # סיום משחק
+        # סיום משחק וסקר MVP (עובד גם אם עברנו את חצות)
         if match['status'] in ['finished', 'FT']:
-            if f"final_msg_{today_str}" not in tasks:
+            if f"final_msg_{m_date}" not in tasks:
                 if match['my_score'] > match['opp_score']:
-                    txt = f"{random.choice(WIN_CHANTS)}\n\n<b>ניצחון ענק!</b> {match['my_score']}-{match['opp_score'] } להפועל! 💙"
+                    txt = f"{random.choice(WIN_CHANTS)}\n\n<b>ניצחון ענק!</b> {match['my_score']}-{match['opp_score']} להפועל! 💙"
                 elif match['my_score'] == match['opp_score']:
                     txt = f"תיקו בסיום המשחק. ⚽\nהתוצאה: {match['my_score']}-{match['opp_score']}.\n\nיוצאים עם נקודה וממשיכים חזק בכל הכוח.\n\nיאללה הפועל מלחמה! 💙"
                 else:
@@ -187,21 +187,28 @@ def main():
                 
                 markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": LEAGUE_TABLE_URL}]]}
                 if send_to_telegram(txt, reply_markup=markup):
-                    with open(task_file, 'a') as f: f.write(f"final_msg_{today_str}:{now.strftime('%H:%M')}\n")
+                    # שומרים גם את השעה של שליחת הודעת הסיום
+                    with open(task_file, 'a') as f: f.write(f"final_msg_{m_date}:{now.strftime('%H:%M')}\n")
 
-            # סקר MVP
-            final_tasks = [t for t in tasks if t.startswith(f"final_msg_{today_str}:")]
-            if final_tasks and f"mvp_poll_{today_str}" not in tasks:
-                time_parts = final_tasks[0].split(":")[-2:]
-                finish_time = now.replace(hour=int(time_parts[0]), minute=int(time_parts[1]))
-                if now >= finish_time + timedelta(minutes=10):
-                    print("🎯 שולח סקר MVP...")
-                    players = get_mvp_players(match['id'])
-                    poll = {"question": "מי המצטיין שלכם הערב? ⚽️", "options": players, "is_anonymous": False}
-                    if send_to_telegram("", is_poll=True, poll_data=poll):
-                        with open(task_file, 'a') as f: f.write(f"mvp_poll_{today_str}\n")
+            # בדיקת שליחת סקר MVP
+            final_task_line = [t for t in tasks if t.startswith(f"final_msg_{m_date}:")]
+            if final_task_line and f"mvp_poll_{m_date}" not in tasks:
+                # מחלצים את השעה שבה נשלחה הודעת הסיום
+                try:
+                    time_str = final_task_line[0].split(":")[-2:]
+                    # יוצרים אובייקט זמן של הודעת הסיום (יכול להיות מאתמול)
+                    f_hour, f_min = int(time_str[0]), int(time_str[1])
+                    # בדיקה פשוטה: אם עברו 10 דקות מאז הודעת הסיום
+                    # (לצורך הפשטות, אם השעה הנוכחית שונה משעת הסיום או שעברו 10 דקות באותה שעה)
+                    if (now.hour != f_hour) or (now.minute >= f_min + 10):
+                        print("🎯 שולח סקר MVP...")
+                        players = get_mvp_players(match['id'])
+                        poll = {"question": "מי המצטיין שלכם הערב? ⚽️", "options": players, "is_anonymous": False}
+                        if send_to_telegram("", is_poll=True, poll_data=poll):
+                            with open(task_file, 'a') as f: f.write(f"mvp_poll_{m_date}\n")
+                except: pass
 
-    # 2. Deep Scan RSS
+    # 2. סריקת כתבות
     print("📡 מתחיל סריקת עומק לכתבות...")
     for url in RSS_FEEDS:
         feed = feedparser.parse(url)
