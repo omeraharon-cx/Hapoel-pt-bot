@@ -1,26 +1,31 @@
 import feedparser
 import requests
-from bs4 import BeautifulSoup
 import os
-import time
 import sys
-import random
+import time
 import urllib.parse
 from datetime import datetime, timedelta
 
+# הגדרה להדפסה מיידית של לוגים בעברית
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- הגדרות מערכת ---
+# --- הגדרות ליבה (Secrets) ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 ADMIN_ID = "425605110"
-TEAM_ID = "5199" 
+
+# --- נתוני הפועל פתח תקווה ב-SportAPI ---
+TEAM_ID = "5199"
+RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
-def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_url=None):
+def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None):
+    """
+    שליחת הודעות לכל המנויים עם טיפול בשגיאות
+    """
     subs = [ADMIN_ID]
     if os.path.exists("subscribers.txt"):
         with open("subscribers.txt", "r") as f:
@@ -31,106 +36,121 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
             if is_poll:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json={"chat_id": cid, **poll_data}, timeout=10)
             elif photo_url:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=15)
+                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown"}, timeout=15)
+                if res.status_code != 200: # גיבוי אם התמונה נכשלת
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown"}, timeout=10)
             else:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
-        except Exception as e: print(f"DEBUG: שגיאת טלגרם: {e}")
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown"}, timeout=10)
+        except Exception as e:
+            print(f"LOG: שגיאה בשליחה ל-{cid}: {e}")
 
 def get_ai_summary(title):
-    if not GEMINI_API_KEY: return None
-    # המתנה ארוכה יותר למניעת 429 בגרסה החינמית
-    print("LOG: ממתין 30 שניות לפני פנייה ל-AI כדי למנוע חסימת מכסה...")
-    time.sleep(30)
-    
+    """
+    סיכום כתבה באמצעות Gemini עם הגנת 429 (מכסה)
+    """
+    if not GEMINI_API_KEY: return title
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    prompt = f"Summarize for Hapoel Petah Tikva fans in 3 Hebrew sentences: {title}"
     try:
-        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=15)
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        print(f"LOG: AI נכשל. סטטוס: {response.status_code}. תגובה: {response.text[:200]}")
+        # המתנה קלה כדי לא "להפציץ" את גוגל
+        time.sleep(2)
+        res = requests.post(url, json={"contents": [{"parts": [{"text": f"סכם ב-2 משפטים לאוהדי הפועל פתח תקווה: {title}"}]}]}, timeout=10)
+        if res.status_code == 200:
+            return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
     except: pass
-    return None
+    return title
 
-def check_match_status():
-    today = get_israel_time().strftime('%Y-%m-%d')
-    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
+def check_for_match():
+    """
+    סריקת לוח המשחקים ב-SportAPI לזיהוי משחק היום
+    """
+    url = f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0" # משחקים אחרונים/נוכחיים
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     
-    print(f"LOG: בודק API לכדורגל (מפתח: {RAPIDAPI_KEY[:5]}***)...")
+    print(f"INFRA: בודק לוח משחקים ב-{RAPIDAPI_HOST}...")
     try:
-        # ניסיון 1: בדיקת המשחקים הקרובים של הקבוצה
-        url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
-        res = requests.get(url, headers=headers, params={"team": TEAM_ID, "next": "5"}, timeout=15)
-        
-        print(f"LOG: תשובת API כדורגל (סטטוס {res.status_code})")
-        data = res.json()
-        
-        if not data.get('response'):
-            print(f"LOG: לא נמצאו משחקים ל-ID {TEAM_ID}. תשובה מלאה: {data}")
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            print(f"INFRA ERROR: API החזיר סטטוס {response.status_code}")
             return None
-
-        for m in data['response']:
-            match_date = m['fixture']['date'][:10]
-            if match_date == today:
-                is_home = str(m['teams']['home']['id']) == TEAM_ID
-                opp = m['teams']['away']['name'] if is_home else m['teams']['home']['name']
+        
+        data = response.json()
+        events = data.get('events', [])
+        today = get_israel_time().strftime('%Y-%m-%d')
+        
+        for event in events:
+            # המרת זמן יוניקס לתאריך רגיל
+            dt = datetime.fromtimestamp(event.get('startTimestamp', 0))
+            if dt.strftime('%Y-%m-%d') == today:
+                home = event['homeTeam']['name']
+                away = event['awayTeam']['name']
+                is_home = str(event['homeTeam']['id']) == TEAM_ID
+                opp = away if is_home else home
+                status = event.get('status', {}).get('type', 'unknown')
+                
+                print(f"INFRA: נמצא משחק! {home} vs {away} (סטטוס: {status})")
                 return {
-                    "id": m['fixture']['id'], "status": m['fixture']['status']['short'],
-                    "opp_name": opp, "my_score": m['goals']['home'] if is_home else m['goals']['away'],
-                    "opp_score": m['goals']['away'] if is_home else m['goals']['home']
+                    "opp": opp,
+                    "status": status,
+                    "home_score": event.get('homeScore', {}).get('display', 0),
+                    "away_score": event.get('awayScore', {}).get('display', 0),
+                    "is_home": is_home
                 }
-    except Exception as e: print(f"LOG ERROR: {e}")
+    except Exception as e:
+        print(f"INFRA ERROR: {e}")
     return None
 
 def main():
     now = get_israel_time()
-    today_key = now.strftime('%Y-%m-%d')
-    print(f"🚀 ריצה התחילה: {now.strftime('%H:%M:%S')}")
+    today_str = now.strftime('%Y-%m-%d')
+    print(f"--- תחילת ריצה: {now.strftime('%H:%M:%S')} ---")
 
+    # 1. טיפול בכתבות RSS
     db_file = "seen_links.txt"
     if not os.path.exists(db_file): open(db_file, 'w').close()
     with open(db_file, 'r') as f: history = set(f.read().splitlines())
 
-    # 1. RSS
-    print("📰 סורק כתבות...")
     feed = feedparser.parse("https://www.hapoelpt.com/blog-feed.xml")
-    hapoel_keys = ["הפועל פ״ת", "פתח-תקוה", "פתח תקווה", "פתח-תקווה", "כחולים", "מבנה"]
+    keywords = ["הפועל פ״ת", "פתח-תקוה", "פתח תקווה", "מבנה", "באר שבע"]
     
     for entry in feed.entries[:5]:
         if entry.link not in history:
-            if any(k in entry.title.lower() for k in hapoel_keys):
-                print(f"🎯 נמצאה כתבה: {entry.title}")
+            if any(k in entry.title.lower() for k in keywords):
+                print(f"RSS: מעבד כתבה חדשה: {entry.title}")
                 summary = get_ai_summary(entry.title)
-                text = summary if summary else entry.title
-                send_to_all(f"**עדכון חדש על הפועל 💙**\n\n{text}\n\n🔗 [לכתבה המלאה]({entry.link})")
+                send_to_telegram(f"**חדשות הפועל** 💙\n\n{summary}\n\n🔗 [לכתבה המלאה]({entry.link})")
                 with open(db_file, 'a') as f: f.write(entry.link + "\n")
                 history.add(entry.link)
 
-    # 2. Match Day
-    match = check_match_status()
-    task_log = "task_log.txt"
+    # 2. בדיקת יום משחק
+    match = check_for_match()
+    task_file = "task_log.txt"
     if not os.path.exists(task_log): open(task_log, 'w').close()
     with open(task_log, 'r') as f: tasks_done = set(f.read().splitlines())
 
     if match:
-        print(f"✅ משחק זוהה ב-API נגד {match['opp_name']}")
-        if f"match_v3_{today_key}" not in tasks_done:
-            clean_opp = urllib.parse.quote(match['opp_name'])
-            img_url = f"https://pollinations.ai/p/football%20match%20Hapoel%20Petah%20Tikva%20blue%20vs%20{clean_opp}"
-            send_to_all(f"MATCH DAY! 💙\n\nהפועל מול {match['opp_name']}\nמביאים 3 נקודות בעזרת השם! ⚽️", photo_url=img_url)
+        # הודעת Match Day (פוסטר וסקר)
+        if f"matchday_{today_str}" not in tasks_done:
+            print("MATCH: שולח הודעת יום משחק")
+            msg = f"MATCH DAY! 💙\n\nהפועל שלנו מול {match['opp']}\nמביאים 3 נקודות בעזרת השם.\n\nיאללה הפועל! ⚽️"
+            poster = f"https://pollinations.ai/p/football%20stadium%20blue%20Hapoel%20Petah%20Tikva%20vs%20{urllib.parse.quote(match['opp'])}"
+            send_to_telegram(msg, photo_url=poster)
             
-            poll = {"question": f"מה ההימור למשחק מול {match['opp_name']}?", "options": ["ניצחון 💙", "תיקו", "הפסד"], "is_anonymous": False}
-            send_to_all("", is_poll=True, poll_data=poll)
-            with open(task_log, 'a') as f: f.write(f"match_v3_{today_key}\n")
+            poll = {"question": f"איך יסתיים המשחק מול {match['opp']}?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד"], "is_anonymous": False}
+            send_to_telegram("", is_poll=True, poll_data=poll)
+            
+            with open(task_log, 'a') as f: f.write(f"matchday_{today_str}\n")
+
+        # בדיקת סיום משחק
+        if match['status'] == 'finished' and f"finished_{today_str}" not in tasks_done:
+            print("MATCH: המשחק הסתיים, שולח עדכון תוצאה")
+            score = f"{match['home_score']}-{match['away_score']}"
+            res_msg = f"סיום המשחק! ⚽️\nתוצאה: {score}\nיאללה הפועל בכל מצב! 💙"
+            send_to_telegram(res_msg)
+            with open(task_log, 'a') as f: f.write(f"finished_{today_str}\n")
     else:
-        # מצב חירום למשחק הערב בלבד (בגלל שה-API לא מזהה)
-        if f"forced_bs_{today_key}" not in tasks_done:
-            print("⚠️ API לא זיהה, מפעיל שליחה ידנית למשחק מול באר שבע")
-            send_to_all("MATCH DAY! 💙\n\nהפועל מול באר שבע (טרנר)\nיוצאים למלחמה! מביאים 3 נקודות בעזרת השם! ⚽️", photo_url="https://pollinations.ai/p/football%20match%20Hapoel%20Petah%20Tikva%20blue%20vs%20Beer%20Sheva")
-            poll = {"question": "מה ההימור למשחק מול באר שבע?", "options": ["ניצחון 💙", "תיקו", "הפסד"], "is_anonymous": False}
-            send_to_all("", is_poll=True, poll_data=poll)
-            with open(task_log, 'a') as f: f.write(f"forced_bs_{today_key}\n")
+        print("MATCH: לא זוהה משחק להיום בלוח האירועים.")
 
-    print("🏁 סיום.")
+    print("--- סיום ריצה ---")
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
