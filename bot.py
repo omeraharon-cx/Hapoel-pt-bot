@@ -19,17 +19,13 @@ TEAM_ID = "5199"
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
-# פונקציית עזר לבדיקת תקינות מפתחות בלוג
-def check_keys():
-    print(f"--- אבחון מפתחות ---")
-    print(f"Gemini Key: {GEMINI_API_KEY[:5]}***" if GEMINI_API_KEY else "Gemini Key: MISSING ❌")
-    print(f"Telegram Token: {TELEGRAM_TOKEN[:5]}***" if TELEGRAM_TOKEN else "Telegram Token: MISSING ❌")
-    print(f"RapidAPI Key: {RAPIDAPI_KEY[:5]}***" if RAPIDAPI_KEY else "RapidAPI Key: MISSING ❌")
-    print(f"-------------------")
-
 def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_url=None):
-    subs = list(set(line.strip() for line in open("subscribers.txt", 'r') if line.strip())) if os.path.exists("subscribers.txt") else [ADMIN_ID]
-    print(f"DEBUG: מנסה לשלוח ל-{len(subs)} מנויים: {subs}")
+    subs = [ADMIN_ID] # לצורך הבדיקה נשלח קודם כל אליך
+    if os.path.exists("subscribers.txt"):
+        with open("subscribers.txt", "r") as f:
+            subs = list(set([line.strip() for line in f if line.strip()]))
+    
+    print(f"DEBUG: מנסה לשלוח הודעה ל-{len(subs)} מנויים...")
     for cid in subs:
         try:
             if is_poll:
@@ -38,101 +34,84 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
                 res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=15)
             else:
                 res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
-            
-            print(f"DEBUG: תשובת טלגרם ל-{cid}: {res.status_code} - {res.text}")
+            print(f"DEBUG: תשובת טלגרם עבור {cid}: {res.status_code}")
         except Exception as e:
-            print(f"DEBUG: שגיאה פיזית בשליחה ל-{cid}: {e}")
+            print(f"DEBUG: שגיאה בשליחה: {e}")
 
-def get_ai_summary(text, recent_summaries):
-    if not GEMINI_API_KEY: return None
+def get_ai_summary(text):
+    if not GEMINI_API_KEY: return "תקציר לא זמין כרגע."
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    prompt = f"Summarize in 3 Hebrew sentences for Hapoel PT fans. Casual tone. TEXT: {text[:2000]}"
+    prompt = f"Summarize this for Hapoel PT fans in 3 Hebrew sentences. Casual tone. TEXT: {text[:2000]}"
     try:
         response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
-        if response.status_code == 429:
-            print(f"DEBUG: AI Quota Exceeded (429). Response: {response.text}")
-            return "QUOTA_EXCEEDED"
-        return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        print(f"DEBUG: AI חזר עם שגיאה {response.status_code}")
+        return None
     except: return None
 
 def check_match_status():
-    today = get_israel_time().strftime('%Y-%m-%d')
+    # מנגנון עקיפת API ליום המשחק
+    print("DEBUG: בודק API לכדורגל...")
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
-    
-    print(f"DEBUG: סורק משחקים להיום ({today})...")
-    # חיפוש רחב יותר - כל המשחקים בליגה הישראלית (ID 281 בדרך כלל) או לפי קבוצה
     try:
         url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
-        # ניסיון לפי TEAM_ID
-        res = requests.get(url, headers=headers, params={"team": TEAM_ID, "last": "1"}, timeout=15).json()
-        if res.get('response'):
-            m = res['response'][0]
-            print(f"DEBUG: משחק אחרון שנמצא: {m['fixture']['date']} - {m['teams']['home']['name']} vs {m['teams']['away']['name']}")
-            if m['fixture']['date'].startswith(today):
-                return parse_match(m)
-        
-        # ניסיון נוסף: המשחק הבא
         res = requests.get(url, headers=headers, params={"team": TEAM_ID, "next": "1"}, timeout=15).json()
         if res.get('response'):
             m = res['response'][0]
-            print(f"DEBUG: משחק הבא שנמצא: {m['fixture']['date']} - {m['teams']['home']['name']} vs {m['teams']['away']['name']}")
-            if m['fixture']['date'].startswith(today):
-                return parse_match(m)
-    except Exception as e:
-        print(f"DEBUG: תקלה בחיפוש משחק: {e}")
-    return None
-
-def parse_match(m):
-    is_home = str(m['teams']['home']['id']) == TEAM_ID
-    return {
-        "id": m['fixture']['id'], "status": m['fixture']['status']['short'],
-        "my_score": m['goals']['home'] if is_home else m['goals']['away'],
-        "opp_score": m['goals']['away'] if is_home else m['goals']['home'],
-        "opp_name": m['teams']['away']['name'] if is_home else m['teams']['home']['name']
-    }
+            print(f"DEBUG: נמצא משחק ב-API: {m['teams']['away']['name']}")
+            return { "id": m['fixture']['id'], "opp_name": "הפועל באר שבע", "status": m['fixture']['status']['short'], "my_score": 0, "opp_score": 0 }
+    except: pass
+    
+    # אם ה-API נכשל, אנחנו כופים את המשחק מול באר שבע כי אנחנו יודעים שהוא קורה!
+    print("DEBUG: API לא מצא משחק, מפעיל 'מצב כפייה' לבאר שבע!")
+    return { "id": "forced", "opp_name": "הפועל באר שבע", "status": "NS", "my_score": 0, "opp_score": 0 }
 
 def main():
-    check_keys()
     now = get_israel_time()
-    today_key = now.strftime('%Y-%m-%d')
+    print(f"--- תחילת ריצת חירום: {now.strftime('%H:%M')} ---")
     
-    if not os.path.exists("subscribers.txt"):
-        with open("subscribers.txt", "w") as f: f.write(ADMIN_ID + "\n")
-    
+    # בדיקת טלגרם מיידית
+    send_to_all("🚀 הבוט התעורר לסריקה לקראת המשחק!")
+
     db_file = "seen_links.txt"
     if not os.path.exists(db_file): open(db_file, 'w').close()
     with open(db_file, 'r') as f: history = set(f.read().splitlines())
-    
-    hapoel_keys = ["הפועל פ״ת", "הפועל פתח-תקוה", "הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל ״מבנה״ פתח-תקוה", "הכחולים"]
 
-    # RSS
+    # שלב 1: RSS - סריקה אגרסיבית
     print("--- שלב 1: כתבות ---")
-    rss_url = "https://www.hapoelpt.com/blog-feed.xml"
-    feed = feedparser.parse(rss_url)
-    for entry in feed.entries[:3]:
-        if entry.link not in history:
-            print(f"DEBUG: מעבד כתבה מהאתר הרשמי: {entry.title}")
-            summary = get_ai_summary(entry.title, [])
-            msg = f"**עדכון חדש**\n\n{entry.title}\n\n🔗 [לכתבה המלאה]({entry.link})"
-            send_to_all(msg)
-            with open(db_file, 'a') as f: f.write(entry.link + "\n")
-            history.add(entry.link)
+    rss_urls = ["https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/"]
+    for url in rss_urls:
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:5]:
+            print(f"DEBUG: בודק כתבה: {entry.title}")
+            if entry.link not in history:
+                print(f"🎯 נמצאה כתבה חדשה! מעבד...")
+                summary = get_ai_summary(entry.title) or entry.title
+                send_to_all(f"**עדכון חדש**\n\n{summary}\n\n🔗 [לכתבה המלאה]({entry.link})")
+                with open(db_file, 'a') as f: f.write(entry.link + "\n")
+                history.add(entry.link)
+                time.sleep(2)
 
-    # Match Day
+    # שלב 2: יום משחק - כפוי
     print("--- שלב 2: יום משחק ---")
     match = check_match_status()
-    if match:
-        print(f"✅ משחק זוהה: מול {match['opp_name']}")
-        task_log = "task_log.txt"
-        if not os.path.exists(task_log): open(task_log, 'w').close()
-        with open(task_log, 'r') as f: done = f.read().splitlines()
-        
-        if f"poster_{today_key}" not in done:
-            send_to_all(f"Match Day! 💙\nהפועל נגד {match['opp_name']}\nמביאים 3 נקודות!")
-            with open(task_log, 'a') as f: f.write(f"poster_{today_key}\n")
-    else:
-        print("❌ לא נמצא משחק להיום בלוח המשחקים.")
+    today_key = now.strftime('%Y-%m-%d')
+    task_log = "task_log.txt"
+    if not os.path.exists(task_log): open(task_log, 'w').close()
+    with open(task_log, 'r') as f: done = f.read().splitlines()
 
-    print("🏁 סיום.")
+    if f"poster_{today_key}" not in done:
+        # פוסטר
+        img_url = f"https://pollinations.ai/p/cinematic%20football%20poster%20Hapoel%20Petah%20Tikva%20blue%20stadium%20vs%20Beer%20Sheva"
+        send_to_all(f"MATCH DAY! 💙\n\nהפועל שלנו מול {match['opp_name']}\nיוצאים למלחמה בטרנר! מביאים 3 נקודות בעזרת השם.\n\nיאללה הפועל! ⚽️", photo_url=img_url)
+        
+        # סקר הימורים (שולחים מיד כי כבר 19:20)
+        poll_data = {"question": "מה ההימור שלכם להערב?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד"], "is_anonymous": False}
+        send_to_all("", is_poll=True, poll_data=poll_data)
+        
+        with open(task_log, 'a') as f: f.write(f"poster_{today_key}\n")
+
+    print("🏁 סיום ריצת חירום.")
 
 if __name__ == "__main__": main()
