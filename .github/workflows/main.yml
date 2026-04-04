@@ -40,3 +40,9 @@ jobs:
           git commit -m "Update history and tasks [skip ci]" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main
+          
+      - name: Commit and push changes
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "Update history and task logs [skip ci]"
+        file_pattern: 'seen_links.txt task_log.txt recent_summaries.txt'
