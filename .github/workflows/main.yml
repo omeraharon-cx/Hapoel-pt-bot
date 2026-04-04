@@ -31,18 +31,10 @@ jobs:
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
         run: python bot.py
 
-      - name: Save history
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          touch seen_links.txt recent_summaries.txt subscribers.txt task_log.txt
-          git add seen_links.txt recent_summaries.txt subscribers.txt task_log.txt
-          git commit -m "Update history and tasks [skip ci]" || echo "No changes to commit"
-          git pull --rebase origin main
-          git push origin main
-          
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-        commit_message: "Update history and task logs [skip ci]"
-        file_pattern: 'seen_links.txt task_log.txt recent_summaries.txt'
+          commit_message: "Update history and task logs [skip ci]"
+          file_pattern: 'seen_links.txt task_log.txt recent_summaries.txt subscribers.txt'
+          # האופציה הבאה מוודאת שאם אין שינויים, ה-Action לא ייכשל
+          skip_dirty_check: false
