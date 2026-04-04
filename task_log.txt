@@ -6,3 +6,6 @@ matchday_infra_2026-04-04
 matchday_v6_2026-04-04
 matchday_stable_2026-04-04
 final_stable_2026-04-04
+matchday_stable_final_v1_2026-04-04
+betting_stable_final_v1_2026-04-04
+final_stable_final_v1_2026-04-04
