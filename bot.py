@@ -33,6 +33,7 @@ RSS_FEEDS = [
 
 HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "מבנה"]
 
+# מפת תרגום שחקנים מעודכנת
 PLAYER_MAP = {
     "Omer Katz": "עומר כץ", "Shahar Rosen": "שחר רוזן", "Dror Nir": "דרור ניר",
     "Itay Rotman": "איתי רוטמן", "Orel Dgani": "אוראל דגני", "Alex Moussounda": "מוסונדה",
@@ -42,7 +43,11 @@ PLAYER_MAP = {
     "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
 }
 
-DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "איתי רוטמן", "דרור ניר", "עידן כהן", "נדב נידם", "רועי דוד", "יונתן כהן", "מארק קוסטה", "שביט מזל", "קליי"]
+# רשימת הגיבוי שביקשת
+DEFAULT_PLAYERS = [
+    "עומר כץ", "אוראל דגני", "איתי רוטמן", "דרור ניר", "עידן כהן", 
+    "נדב נידם", "רועי דוד", "יונתן כהן", "מארק קוסטה", "שביט מזל", "קליי"
+]
 
 WIN_CHANTS = [
     "אמרו לו הפועל אז הלך לאורווה, אמרו לו מכבי אז הוא צעק ש-אה! 💙",
@@ -86,13 +91,15 @@ def get_ai_summary(text, title, recent_summaries):
         f"טקסט: {text[:3500]}"
     )
     try:
-        # שינוי לכתובת v1 היציבה
-        api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # חזרה ל-v1beta עם שם מודל מפורש - זה השילוב הכי יציב
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         if res.status_code == 200:
             result = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             return result if "SKIP" not in result.upper() else None
-        else: print(f"DEBUG Gemini API Error {res.status_code}")
+        else:
+            print(f"DEBUG Gemini API Error {res.status_code}")
+            print(f"DEBUG Gemini Error Body: {res.text}") # זה יעזור לנו להבין בדיוק למה 404
     except: pass
     return None
 
@@ -142,7 +149,6 @@ def main():
     match = get_match_data()
     if match and match['status'] in ['finished', 'FT']:
         m_date = match['date']
-        # הודעת סיום מושקעת
         if f"final_msg_{m_date}" not in tasks:
             if match['my_score'] > match['opp_score']:
                 txt = f"{random.choice(WIN_CHANTS)}\n\n<b>ניצחון ענק!</b> {match['my_score']}-{match['opp_score']} להפועל! 💙"
@@ -156,7 +162,6 @@ def main():
                 with open(task_file, 'a') as f: f.write(f"final_msg_{m_date}:{now.strftime('%H:%M')}\n")
                 tasks.add(f"final_msg_{m_date}:{now.strftime('%H:%M')}")
 
-        # סקר MVP
         final_task = [t for t in tasks if t.startswith(f"final_msg_{m_date}:")]
         if final_task and f"mvp_poll_{m_date}" not in tasks:
             t_parts = final_task[0].split(":")[-2:]
@@ -184,7 +189,9 @@ def main():
                             with open(db_file, "a") as f: f.write(entry.link + "\n")
                             with open(sum_db, "a", encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
                             history.add(entry.link)
-            except: continue
+                    else: print(f"DEBUG: AI skipped summary for {entry.title}")
+            except Exception as e: 
+                print(f"DEBUG Error scanning {entry.link}: {e}")
     print("--- סיום ---")
 
 if __name__ == "__main__": main()
