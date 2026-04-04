@@ -35,6 +35,5 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update history and task logs [skip ci]"
-          file_pattern: 'seen_links.txt task_log.txt recent_summaries.txt subscribers.txt'
-          # האופציה הבאה מוודאת שאם אין שינויים, ה-Action לא ייכשל
+          file_pattern: 'seen_links.txt task_log.txt recent_summaries.txt'
           skip_dirty_check: false
