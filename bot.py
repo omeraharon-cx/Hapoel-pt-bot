@@ -20,6 +20,10 @@ ADMIN_ID = "425605110"
 TEAM_ID = "5199" 
 LEAGUE_ID = "877"
 
+# הגדרת שעון ישראל (UTC+3)
+def get_israel_time():
+    return datetime.utcnow() + timedelta(hours=3)
+
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
     "https://www.one.co.il/cat/rss/",
@@ -36,8 +40,7 @@ WIN_CHANTS = [
     "כמו דמיון חופשייי, שנינו ביחדדד רק את ואני\nכחול עולה עולה... יאללה הפועלללל, כחול עולה"
 ]
 
-# --- פונקציות ניהול מנויים ---
-
+# --- ניהול מנויים ---
 def get_subscribers():
     sub_file = "subscribers.txt"
     if not os.path.exists(sub_file):
@@ -46,7 +49,6 @@ def get_subscribers():
         return list(set(line.strip() for line in f if line.strip()))
 
 def update_subscribers():
-    print("DEBUG: בודק מצטרפים חדשים בטלגרם...")
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         res = requests.get(url, timeout=10).json()
@@ -61,8 +63,6 @@ def update_subscribers():
                         print(f"✅ מנוי חדש נוסף: {cid}")
     except: pass
 
-# --- פונקציות שליחה ---
-
 def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_url=None):
     subs = get_subscribers()
     for cid in subs:
@@ -75,55 +75,25 @@ def send_to_all(text, reply_markup=None, is_poll=False, poll_data=None, photo_ur
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup}, timeout=10)
         except: pass
 
-# --- פונקציות תוכן ו-AI ---
-
-def get_full_article_text(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.content, 'html.parser')
-        for s in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']): s.decompose()
-        text_blocks = soup.find_all(['p', 'h1', 'h2', 'h3'])
-        return " ".join([t.get_text().strip() for t in text_blocks if len(t.get_text()) > 25])
-    except: return ""
-
+# --- AI וכתבות ---
 def get_ai_summary(text, recent_summaries):
     if not text or len(text) < 100: return None
-    
-    # המתנה קריטית למניעת חסימת 429 (מכסה חינמית)
-    time.sleep(12)
-    
-    # שימוש בכתובת v1beta ובדגם gemini-2.0-flash (היחיד שגוגל מוצא ב-2026)
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    
     summaries_context = "\n".join([f"- {s}" for s in recent_summaries])
-    prompt = (
-        "1. Analyze the article. Is it PRIMARILY about Hapoel Petah Tikva? If not, return ONLY: SKIP\n"
-        f"2. Check if this news describes the EXACT SAME event as any of these recent updates:\n{summaries_context}\n"
-        "3. If it is a duplicate, return ONLY: DUPLICATE\n"
-        "4. Otherwise, write a 3-sentence Hebrew summary. Casual tone, NO greetings, focus on Hapoel PT.\n"
-        f"\nARTICLE TEXT:\n{text[:3000]}"
-    )
-
+    prompt = f"Summarize in 3 Hebrew sentences for Hapoel PT fans. If not about them, return SKIP. Duplicates to avoid: {summaries_context}. TEXT: {text[:2500]}"
     try:
-        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}]}, timeout=25)
-        data = response.json()
-        
-        if response.status_code != 200:
-            print(f"❌ שגיאת AI (סטטוס {response.status_code}): {data.get('error', {}).get('message', 'Unknown error')}")
-            return None
-            
-        summary = data['candidates'][0]['content']['parts'][0]['text'].strip()
-        if "SKIP" in summary.upper() or "DUPLICATE" in summary.upper(): return "REJECTED"
-        return summary
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
+        if response.status_code == 429: return "QUOTA_EXCEEDED"
+        res = response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        return "REJECTED" if "SKIP" in res.upper() else res
     except: return None
 
-# --- פונקציות כדורגל (RapidAPI) ---
-
 def check_match_status():
+    today = get_israel_time().strftime('%Y-%m-%d')
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
-    params = {"team": TEAM_ID, "date": datetime.now().strftime('%Y-%m-%d')}
+    params = {"team": TEAM_ID, "date": today}
+    print(f"DEBUG: בודק משחקים לתאריך {today}...")
     try:
         res = requests.get(url, headers=headers, params=params, timeout=15).json()
         if res.get('results', 0) > 0:
@@ -135,109 +105,85 @@ def check_match_status():
                 "opp_score": m['goals']['away'] if is_home else m['goals']['home'],
                 "opp_name": m['teams']['away']['name'] if is_home else m['teams']['home']['name']
             }
-    except: return None
-
-def get_match_players(fixture_id):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/players"
-    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
-    params = {"fixture": fixture_id, "team": TEAM_ID}
-    try:
-        res = requests.get(url, headers=headers, params=params, timeout=15).json()
-        players = res['response'][0]['players']
-        return [p['player']['name'] for p in players if (p['statistics'][0]['games']['minutes'] or 0) > 0][:10]
-    except: return ["שחקן סגל", "שחקן אחר"]
-
-# --- ריצה ראשית ---
+    except Exception as e: print(f"DEBUG API ERROR: {e}")
+    return None
 
 def main():
-    print("🚀 סריקה התחילה (גרסת 2026 משולבת - בסיס 26.3)...", flush=True)
-    now = datetime.now()
+    now = get_israel_time()
     today_key = now.strftime('%Y-%m-%d')
+    print(f"🚀 סריקה התחילה: {now.strftime('%H:%M:%S')} (שעון ישראל)")
     
     update_subscribers()
-
-    db_file, summary_db, task_file = "seen_links.txt", "recent_summaries.txt", "task_log.txt"
-    for f in [db_file, summary_db, task_file]:
+    db_file, sum_db, task_file = "seen_links.txt", "recent_summaries.txt", "task_log.txt"
+    for f in [db_file, sum_db, task_file]:
         if not os.path.exists(f): open(f, 'a').close()
-        
-    with open(db_file, 'r') as f: history = f.read().splitlines()
-    with open(summary_db, 'r', encoding='utf-8') as f: recent_summaries = f.read().splitlines()[-10:]
+    with open(db_file, 'r') as f: history = set(f.read().splitlines())
+    with open(sum_db, 'r', encoding='utf-8') as f: recent_summaries = f.read().splitlines()[-10:]
     with open(task_file, 'r') as f: tasks_done = set(f.read().splitlines())
 
     hapoel_keys = ["הפועל פ״ת", "הפועל פתח-תקוה", "הפועל פתח תקווה", "הפועל פתח-תקווה", "הפועל ״מבנה״ פתח-תקוה", "הכחולים", "המלאבסים", "הפועל פת"]
 
-    # 2. סריקת RSS
+    # 1. סריקת RSS עם הגנה מחסימת AI
     for feed_url in RSS_FEEDS:
-        print(f"📡 בודק פיד: {feed_url}", flush=True)
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             link, title = entry.link, entry.title
+            if link in history: continue
             
-            # סנן תאריך (שבוע אחרון)
-            published = entry.get('published_parsed')
-            if published and now - datetime.fromtimestamp(calendar.timegm(published)) > timedelta(days=7): continue
-
-            if link in history or title in history: continue
-
-            content = get_full_article_text(link)
-            is_official = "hapoelpt.com" in link or "hapoelpt.com" in feed_url
-            is_in_title = any(key in title.lower() for key in hapoel_keys)
-            count_in_body = sum(content.lower().count(key) for key in hapoel_keys)
-
-            if is_official or is_in_title or count_in_body >= 2:
-                print(f"🎯 מעבד כתבה: {title}", flush=True)
-                summary = get_ai_summary(content, recent_summaries)
-
-                if summary == "REJECTED":
-                    print(f"⏭️ AI החליט לדלג (לא רלוונטי או כפול).", flush=True)
-                    with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
-                    continue
-
-                if summary:
-                    msg = f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
-                    send_to_all(msg)
-                    with open(db_file, 'a') as f: f.write(link + "\n" + title + "\n")
-                    with open(summary_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            try:
+                res = requests.get(link, headers=headers, timeout=10)
+                soup = BeautifulSoup(res.content, 'html.parser')
+                content = " ".join([t.get_text() for t in soup.find_all(['p', 'h1', 'h2'])])
+                if any(k in (title + content).lower() for k in hapoel_keys) or "hapoelpt.com" in link:
+                    summary = get_ai_summary(content, recent_summaries)
+                    
+                    if summary == "QUOTA_EXCEEDED":
+                        # אם ה-AI חסום, עדיין שולחים הודעה בסיסית!
+                        print(f"⚠️ AI חסום. שולח עדכון בסיסי ל-{title}")
+                        send_to_all(f"**עדכון חדש על הפועל 💙**\n\n{title}\n\n🔗 [לכתבה המלאה]({link})")
+                    elif summary and summary != "REJECTED":
+                        send_to_all(f"**יש עדכון חדש על הפועל 💙**\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})")
+                        with open(sum_db, 'a', encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
+                    
+                    with open(db_file, 'a') as f: f.write(link + "\n")
+                    history.add(link)
                     time.sleep(5)
+            except: continue
 
-    # 3. לוגיקת יום משחק
+    # 2. לוגיקת יום משחק
     match = check_match_status()
     if match:
-        if now.hour < 12 and f"poster_{today_key}" not in tasks_done:
-            img_desc = get_ai_summary(f"Describe a cinematic matchday poster: Hapoel Petah Tikva vs {match['opp_name']}, blue and white stadium.", [])
-            if img_desc and "REJECTED" not in img_desc:
+        print(f"⚽ נמצא משחק מול {match['opp_name']}! סטטוס: {match['status']}")
+        
+        # פוסטר (אם AI עובד)
+        if now.hour >= 10 and f"poster_{today_key}" not in tasks_done:
+            img_desc = get_ai_summary(f"Matchday poster Hapoel PT vs {match['opp_name']}, blue theme.", [])
+            if img_desc and img_desc != "QUOTA_EXCEEDED":
                 url = f"https://pollinations.ai/p/{img_desc.replace(' ', '%20')}"
-                send_to_all("Match Day 💙\n\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא\nיאללה הפועל לתת את הלב בשביל הסמל.\nמביאים 3 נקודות בע״ה\n\nקדימה הפועללל ⚽️", photo_url=url)
+                send_to_all("Match Day 💙\n\nיאללה הפועל לתת את הלב!\nמביאים 3 נקודות בע״ה", photo_url=url)
                 with open(task_file, 'a') as f: f.write(f"poster_{today_key}\n")
 
-        if now.hour == 15 and f"bet_{today_key}" not in tasks_done:
+        # הימורים (שעון ישראל!)
+        if now.hour >= 15 and f"bet_{today_key}" not in tasks_done:
             send_to_all("", is_poll=True, poll_data={"question": f"איך יסתיים המשחק מול {match['opp_name']}?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד"], "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"bet_{today_key}\n")
 
+        # סיום משחק
         if match['status'] == 'FT' and f"end_{today_key}" not in tasks_done:
             if match['my_score'] > match['opp_score']:
-                res_msg = f"{random.choice(WIN_CHANTS)}\n\nיופי הפועללל, איזה נצחון גדול! 💙"
-            elif match['my_score'] == match['opp_score']:
-                res_msg = "תיקו בסיום. ממשיכים הלאה בכל הכוח! 💙"
+                res_msg = f"{random.choice(WIN_CHANTS)}\n\nניצחון ענק להפועל! 💙"
             else:
-                res_msg = "הפסד כואב, מרימים את הראש וממשיכים מלחמה! 💙"
+                res_msg = f"המשחק הסתיים בתוצאה {match['my_score']}:{match['opp_score']}. יאללה הפועל בכל מצב! 💙"
             
             markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": "https://www.football.co.il/leagues/israeli-premier-league/table"}]]}
             send_to_all(res_msg, reply_markup=markup)
             
-            time.sleep(600)
+            time.sleep(10) # סקר MVP מיידי
             players = get_match_players(match['id'])
             send_to_all("", is_poll=True, poll_data={"question": "מי השחקן המצטיין שלכם היום?", "options": players, "is_anonymous": False})
             with open(task_file, 'a') as f: f.write(f"end_{today_key}\n")
 
-    # 4. פינת היסטוריה (רביעי ב-12:00)
-    if now.weekday() == 2 and now.hour == 12 and f"hist_{today_key}" not in tasks_done:
-        hist_text = get_ai_summary("Tell a short, interesting historical fact about Hapoel Petah Tikva football club in Hebrew.", [])
-        if hist_text and "REJECTED" not in hist_text:
-            send_to_all(f"📚 **פינת ההיסטוריה השבועית**\n\n{hist_text}")
-            with open(task_file, 'a') as f: f.write(f"hist_{today_key}\n")
-
     print("🏁 סיום.")
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
