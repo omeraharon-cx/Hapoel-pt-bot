@@ -3,3 +3,4 @@ match_final_2026-04-04
 forced_bs_2026-04-04
 matchday_v4_2026-04-04
 matchday_infra_2026-04-04
+matchday_v6_2026-04-04
