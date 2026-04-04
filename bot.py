@@ -6,6 +6,7 @@ import time
 import sys
 import random
 import urllib.parse
+import html # הוסף לייבוא
 from datetime import datetime, timedelta
 
 # הגדרה להדפסה מיידית ללוגים
@@ -49,24 +50,37 @@ WIN_CHANTS = [
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
+def escape_html(text):
+    """מנקה טקסט כדי שלא ישבור את פורמט ה-HTML של טלגרם"""
+    if not text: return ""
+    return html.escape(text)
+
 def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_markup=None):
     url_base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
     try:
-        payload = {"chat_id": ADMIN_ID, "parse_mode": "Markdown"}
+        # שינינו ל-HTML כי Markdown נוטה להישבר
+        payload = {"chat_id": ADMIN_ID, "parse_mode": "HTML"}
+        
         if is_poll:
+            # ניקוי אופציות הסקר מתווים בעייתיים
+            poll_data["options"] = [str(opt)[:100] for opt in poll_data["options"]]
             r = requests.post(f"{url_base}/sendPoll", json={**payload, **poll_data}, timeout=10)
         elif photo_url:
             payload.update({"photo": photo_url, "caption": text, "reply_markup": reply_markup})
             r = requests.post(f"{url_base}/sendPhoto", json=payload, timeout=15)
             if r.status_code != 200:
-                r = requests.post(f"{url_base}/sendMessage", json={"chat_id": ADMIN_ID, "text": text, "parse_mode": "Markdown", "reply_markup": reply_markup})
+                print(f"DEBUG: Photo failed, trying simple text. Error: {r.text}")
+                r = requests.post(f"{url_base}/sendMessage", json={"chat_id": ADMIN_ID, "text": text, "parse_mode": "HTML", "reply_markup": reply_markup})
         else:
             payload.update({"text": text, "reply_markup": reply_markup})
             r = requests.post(f"{url_base}/sendMessage", json=payload, timeout=10)
+        
         print(f"DEBUG: Telegram Status {r.status_code}")
+        if r.status_code != 200:
+            print(f"DEBUG ERROR DETAILS: {r.text}") # כאן נראה בדיוק למה טלגרם כועס
         return r.status_code == 200
     except Exception as e:
-        print(f"DEBUG ERROR Telegram: {e}")
+        print(f"DEBUG ERROR Telegram Exception: {e}")
         return False
 
 def get_full_article_text(url):
@@ -95,7 +109,10 @@ def get_ai_summary(text, title, recent_summaries):
         if res.status_code == 200:
             result = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             return result if "SKIP" not in result.upper() else None
-    except: pass
+        else:
+            print(f"DEBUG: Gemini API Error {res.status_code}: {res.text}")
+    except Exception as e: 
+        print(f"DEBUG: Gemini Exception: {e}")
     return None
 
 def get_match_data():
@@ -125,7 +142,9 @@ def get_mvp_players(event_id):
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
         side = 'home' if str(res.get('home', {}).get('team', {}).get('id')) == TEAM_ID else 'away'
-        return [p['player']['name'] for p in res.get(side, {}).get('lineup', [])][:10]
+        players = [p['player']['name'] for p in res.get(side, {}).get('lineup', [])]
+        if not players: raise Exception("No players found")
+        return players[:10]
     except: return ["עומר כץ", "רם לוי", "מתן גושה", "דרור ניר", "רועי דוד"]
 
 def main():
@@ -146,7 +165,7 @@ def main():
     if match:
         # פוסטר
         if now.hour >= 8 and f"matchday_{today_str}" not in tasks:
-            msg = f"MATCH DAY! 💙\n\nהפועל שלנו מול {match['opp']}\nמביאים 3 נקודות בעזרת השם.\n\nיאללה הפועל! ⚽️"
+            msg = f"<b>MATCH DAY!</b> 💙\n\nהפועל שלנו מול {escape_html(match['opp'])}\nמביאים 3 נקודות בעזרת השם.\n\nיאללה הפועל! ⚽️"
             if send_to_telegram(msg, photo_url=HAPOEL_LOGO_URL):
                 with open(task_file, 'a') as f: f.write(f"matchday_{today_str}\n")
         
@@ -160,7 +179,7 @@ def main():
         if match['status'] in ['finished', 'FT']:
             if f"final_msg_{today_str}" not in tasks:
                 if match['my_score'] > match['opp_score']:
-                    txt = f"{random.choice(WIN_CHANTS)}\n\nניצחון ענק! {match['my_score']}-{match['opp_score']} להפועל! 💙"
+                    txt = f"{random.choice(WIN_CHANTS)}\n\n<b>ניצחון ענק!</b> {match['my_score']}-{match['opp_score'] } להפועל! 💙"
                 elif match['my_score'] == match['opp_score']:
                     txt = f"תיקו בסיום המשחק. ⚽\nהתוצאה: {match['my_score']}-{match['opp_score']}.\n\nיוצאים עם נקודה וממשיכים חזק בכל הכוח.\n\nיאללה הפועל מלחמה! 💙"
                 else:
@@ -170,7 +189,7 @@ def main():
                 if send_to_telegram(txt, reply_markup=markup):
                     with open(task_file, 'a') as f: f.write(f"final_msg_{today_str}:{now.strftime('%H:%M')}\n")
 
-            # סקר MVP (10 דקות אחרי הודעת הסיום)
+            # סקר MVP
             final_tasks = [t for t in tasks if t.startswith(f"final_msg_{today_str}:")]
             if final_tasks and f"mvp_poll_{today_str}" not in tasks:
                 time_parts = final_tasks[0].split(":")[-2:]
@@ -189,7 +208,6 @@ def main():
         for entry in feed.entries[:10]:
             if entry.link in history: continue
             
-            # שלב ה-Deep Scan: קוראים את כל הכתבה לפני הכל
             full_text = get_full_article_text(entry.link)
             combined_text = (entry.title + " " + full_text).lower()
             
@@ -197,12 +215,14 @@ def main():
                 print(f"🎯 נמצא אזכור בכתבה: {entry.title}")
                 summary = get_ai_summary(full_text, entry.title, recent)
                 if summary:
-                    msg = f"💙 **עדכון חדש**\n\n{summary}\n\n🔗 [לכתבה המלאה]({entry.link})"
+                    msg = f"💙 <b>עדכון חדש</b>\n\n{escape_html(summary)}\n\n🔗 <a href='{entry.link}'>לכתבה המלאה</a>"
                     if send_to_telegram(msg):
                         with open("seen_links.txt", "a") as f: f.write(entry.link + "\n")
                         with open("recent_summaries.txt", "a", encoding='utf-8') as f: f.write(summary.replace("\n", " ") + "\n")
                         history.add(entry.link)
                         time.sleep(5)
+                else:
+                    print(f"DEBUG: Summary for '{entry.title}' was skipped (AI decided SKIP or Error)")
 
     print("--- סיום ריצה מוצלח ---")
 
