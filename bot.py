@@ -23,9 +23,6 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None):
-    """
-    שליחת הודעות לכל המנויים עם טיפול בשגיאות
-    """
     subs = [ADMIN_ID]
     if os.path.exists("subscribers.txt"):
         with open("subscribers.txt", "r") as f:
@@ -37,7 +34,7 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None):
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json={"chat_id": cid, **poll_data}, timeout=10)
             elif photo_url:
                 res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", json={"chat_id": cid, "photo": photo_url, "caption": text, "parse_mode": "Markdown"}, timeout=15)
-                if res.status_code != 200: # גיבוי אם התמונה נכשלת
+                if res.status_code != 200:
                     requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown"}, timeout=10)
             else:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": cid, "text": text, "parse_mode": "Markdown"}, timeout=10)
@@ -45,13 +42,9 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None):
             print(f"LOG: שגיאה בשליחה ל-{cid}: {e}")
 
 def get_ai_summary(title):
-    """
-    סיכום כתבה באמצעות Gemini עם הגנת 429 (מכסה)
-    """
     if not GEMINI_API_KEY: return title
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
-        # המתנה קלה כדי לא "להפציץ" את גוגל
         time.sleep(2)
         res = requests.post(url, json={"contents": [{"parts": [{"text": f"סכם ב-2 משפטים לאוהדי הפועל פתח תקווה: {title}"}]}]}, timeout=10)
         if res.status_code == 200:
@@ -60,10 +53,8 @@ def get_ai_summary(title):
     return title
 
 def check_for_match():
-    """
-    סריקת לוח המשחקים ב-SportAPI לזיהוי משחק היום
-    """
-    url = f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0" # משחקים אחרונים/נוכחיים
+    # משתמשים ב-next/0 כדי לראות את המשחקים הבאים/הנוכחיים
+    url = f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0"
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     
     print(f"INFRA: בודק לוח משחקים ב-{RAPIDAPI_HOST}...")
@@ -78,7 +69,6 @@ def check_for_match():
         today = get_israel_time().strftime('%Y-%m-%d')
         
         for event in events:
-            # המרת זמן יוניקס לתאריך רגיל
             dt = datetime.fromtimestamp(event.get('startTimestamp', 0))
             if dt.strftime('%Y-%m-%d') == today:
                 home = event['homeTeam']['name']
@@ -87,13 +77,12 @@ def check_for_match():
                 opp = away if is_home else home
                 status = event.get('status', {}).get('type', 'unknown')
                 
-                print(f"INFRA: נמצא משחק! {home} vs {away} (סטטוס: {status})")
+                print(f"INFRA: נמצא משחק להיום! {home} נגד {away} (סטטוס: {status})")
                 return {
                     "opp": opp,
                     "status": status,
                     "home_score": event.get('homeScore', {}).get('display', 0),
-                    "away_score": event.get('awayScore', {}).get('display', 0),
-                    "is_home": is_home
+                    "away_score": event.get('awayScore', {}).get('display', 0)
                 }
     except Exception as e:
         print(f"INFRA ERROR: {e}")
@@ -104,7 +93,7 @@ def main():
     today_str = now.strftime('%Y-%m-%d')
     print(f"--- תחילת ריצה: {now.strftime('%H:%M:%S')} ---")
 
-    # 1. טיפול בכתבות RSS
+    # 1. RSS
     db_file = "seen_links.txt"
     if not os.path.exists(db_file): open(db_file, 'w').close()
     with open(db_file, 'r') as f: history = set(f.read().splitlines())
@@ -121,15 +110,14 @@ def main():
                 with open(db_file, 'a') as f: f.write(entry.link + "\n")
                 history.add(entry.link)
 
-    # 2. בדיקת יום משחק
+    # 2. Match Day
     match = check_for_match()
     task_file = "task_log.txt"
-    if not os.path.exists(task_log): open(task_log, 'w').close()
-    with open(task_log, 'r') as f: tasks_done = set(f.read().splitlines())
+    if not os.path.exists(task_file): open(task_file, 'w').close()
+    with open(task_file, 'r') as f: tasks_done = set(f.read().splitlines())
 
     if match:
-        # הודעת Match Day (פוסטר וסקר)
-        if f"matchday_{today_str}" not in tasks_done:
+        if f"matchday_v4_{today_str}" not in tasks_done:
             print("MATCH: שולח הודעת יום משחק")
             msg = f"MATCH DAY! 💙\n\nהפועל שלנו מול {match['opp']}\nמביאים 3 נקודות בעזרת השם.\n\nיאללה הפועל! ⚽️"
             poster = f"https://pollinations.ai/p/football%20stadium%20blue%20Hapoel%20Petah%20Tikva%20vs%20{urllib.parse.quote(match['opp'])}"
@@ -138,15 +126,14 @@ def main():
             poll = {"question": f"איך יסתיים המשחק מול {match['opp']}?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד"], "is_anonymous": False}
             send_to_telegram("", is_poll=True, poll_data=poll)
             
-            with open(task_log, 'a') as f: f.write(f"matchday_{today_str}\n")
+            with open(task_file, 'a') as f: f.write(f"matchday_v4_{today_str}\n")
 
-        # בדיקת סיום משחק
-        if match['status'] == 'finished' and f"finished_{today_str}" not in tasks_done:
-            print("MATCH: המשחק הסתיים, שולח עדכון תוצאה")
+        if match['status'] == 'finished' and f"finished_v4_{today_str}" not in tasks_done:
+            print("MATCH: המשחק הסתיים")
             score = f"{match['home_score']}-{match['away_score']}"
             res_msg = f"סיום המשחק! ⚽️\nתוצאה: {score}\nיאללה הפועל בכל מצב! 💙"
             send_to_telegram(res_msg)
-            with open(task_log, 'a') as f: f.write(f"finished_{today_str}\n")
+            with open(task_file, 'a') as f: f.write(f"finished_v4_{today_str}\n")
     else:
         print("MATCH: לא זוהה משחק להיום בלוח האירועים.")
 
