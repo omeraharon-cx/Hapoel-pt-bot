@@ -43,7 +43,7 @@ PLAYER_MAP = {
     "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
 }
 
-# רשימת הגיבוי שביקשת (השחקנים שמשחקים בדרך כלל)
+# רשימת הגיבוי שביקשת
 DEFAULT_PLAYERS = [
     "עומר כץ", "שחר רוזן", "דרור ניר", "איתי רוטמן", "אוראל דגני", "מוסונדה",
     "עידן כהן", "נועם כהן", "אלטמן", "נדב נידם", "רועי דוד", "ארי כהן",
@@ -68,6 +68,7 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_
     try:
         payload = {"chat_id": ADMIN_ID, "parse_mode": "HTML"}
         if is_poll:
+            poll_data["options"] = [str(opt)[:100] for opt in poll_data["options"]]
             r = requests.post(f"{url_base}/sendPoll", json={**payload, **poll_data}, timeout=10)
         elif photo_url:
             payload.update({"photo": photo_url, "caption": text, "reply_markup": reply_markup})
@@ -91,19 +92,27 @@ def get_ai_summary(text, title, recent_summaries):
         f"אם הכתבה לא קשורה להפועל פתח תקווה, כתוב רק: SKIP\n"
         f"טקסט: {text[:3500]}"
     )
-    try:
-        # עברנו למודל gemini-pro בגרסת v1 היציבה - זה הפתרון ל-404
-        api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-        print(f"DEBUG: Attempting AI Summary using model: gemini-pro")
-        
-        res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
-        if res.status_code == 200:
-            result = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-            return result if "SKIP" not in result.upper() else None
-        else:
-            print(f"DEBUG Gemini Error {res.status_code}: {res.text}")
-    except Exception as e:
-        print(f"DEBUG Gemini Exception: {e}")
+    
+    # ננסה את המודל הכי עדכני בנתיב v1beta שפתר בעיות דומות בעבר
+    models_to_try = ["gemini-1.5-flash", "gemini-pro"]
+    
+    for model_name in models_to_try:
+        try:
+            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+            print(f"DEBUG: Attempting AI Summary using model: {model_name}")
+            
+            headers = {'Content-Type': 'application/json'}
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+            
+            res = requests.post(api_url, json=payload, headers=headers, timeout=25)
+            if res.status_code == 200:
+                result = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                return result if "SKIP" not in result.upper() else None
+            else:
+                print(f"DEBUG Gemini Error {res.status_code} for {model_name}: {res.text}")
+        except Exception as e:
+            print(f"DEBUG Gemini Exception with {model_name}: {e}")
+            
     return None
 
 def get_match_data():
