@@ -33,7 +33,7 @@ RSS_FEEDS = [
 
 HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "מבנה"]
 
-# מפת תרגום שחקנים מעודכנת
+# מפת תרגום שחקנים מעודכנת לסגל 2026 לפי בקשתך
 PLAYER_MAP = {
     "Omer Katz": "עומר כץ", "Shahar Rosen": "שחר רוזן", "Dror Nir": "דרור ניר",
     "Itay Rotman": "איתי רוטמן", "Orel Dgani": "אוראל דגני", "Alex Moussounda": "מוסונדה",
@@ -83,7 +83,7 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_
 
 def get_ai_summary(text, title, recent_summaries):
     if not GEMINI_API_KEY: 
-        print("DEBUG: Gemini API Key is missing!")
+        print("DEBUG: Missing Gemini API Key")
         return None
     context = "\n".join(recent_summaries)
     prompt = (
@@ -94,9 +94,9 @@ def get_ai_summary(text, title, recent_summaries):
         f"טקסט: {text[:3500]}"
     )
     try:
-        # שימוש בכתובת הכי יציבה: v1beta עם gemini-1.5-flash-latest
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
-        print(f"DEBUG: Attempting AI Summary using model: gemini-1.5-flash-latest")
+        # הפתרון ל-404: מודל gemini-1.5-flash (בלי ה-latest) בגרסת v1beta
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        print(f"DEBUG: Attempting AI Summary using model: gemini-1.5-flash")
         
         res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         if res.status_code == 200:
