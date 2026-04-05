@@ -33,7 +33,7 @@ RSS_FEEDS = [
 
 HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "מבנה"]
 
-# מפת תרגום שחקנים מעודכנת לסגל 2026 לפי בקשתך
+# מפת תרגום שחקנים מעודכנת (לפי הרשימה שסיפקת)
 PLAYER_MAP = {
     "Omer Katz": "עומר כץ", "Shahar Rosen": "שחר רוזן", "Dror Nir": "דרור ניר",
     "Itay Rotman": "איתי רוטמן", "Orel Dgani": "אוראל דגני", "Alex Moussounda": "מוסונדה",
@@ -43,7 +43,7 @@ PLAYER_MAP = {
     "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
 }
 
-# רשימת הגיבוי המדויקת שביקשת
+# רשימת הגיבוי שביקשת (השחקנים שמשחקים בדרך כלל)
 DEFAULT_PLAYERS = [
     "עומר כץ", "שחר רוזן", "דרור ניר", "איתי רוטמן", "אוראל דגני", "מוסונדה",
     "עידן כהן", "נועם כהן", "אלטמן", "נדב נידם", "רועי דוד", "ארי כהן",
@@ -82,9 +82,7 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_
         return False
 
 def get_ai_summary(text, title, recent_summaries):
-    if not GEMINI_API_KEY: 
-        print("DEBUG: Missing Gemini API Key")
-        return None
+    if not GEMINI_API_KEY: return None
     context = "\n".join(recent_summaries)
     prompt = (
         f"אתה עיתונאי ספורט עבור אוהדי הפועל פתח תקווה. "
@@ -94,9 +92,9 @@ def get_ai_summary(text, title, recent_summaries):
         f"טקסט: {text[:3500]}"
     )
     try:
-        # הפתרון ל-404: מודל gemini-1.5-flash (בלי ה-latest) בגרסת v1beta
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        print(f"DEBUG: Attempting AI Summary using model: gemini-1.5-flash")
+        # עברנו למודל gemini-pro בגרסת v1 היציבה - זה הפתרון ל-404
+        api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+        print(f"DEBUG: Attempting AI Summary using model: gemini-pro")
         
         res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         if res.status_code == 200:
@@ -171,6 +169,7 @@ def main():
         if final_task and f"mvp_poll_{m_date}" not in tasks:
             t_parts = final_task[0].split(":")[-2:]
             if now.minute >= int(t_parts[1]) + 10 or now.hour > int(t_parts[0]):
+                print("🎯 שולח סקר MVP...")
                 players = get_mvp_players(match['id'])
                 poll = {"question": "מי המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False}
                 if send_to_telegram("", is_poll=True, poll_data=poll):
