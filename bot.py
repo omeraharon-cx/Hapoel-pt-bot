@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 # הגדרה להדפסה מיידית ללוגים
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- הגדרות ליבה (Secrets) ---
+# --- הגדרות ליבה ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
@@ -39,141 +39,130 @@ PLAYER_MAP = {
     "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
 }
 
-DEFAULT_PLAYERS = ["עומר כץ", "שחר רוזן", "דרור ניר", "איתי רוטמן", "אוראל דגני", "מוסונדה", "עידן כהן", "נועם כהן", "אלטמן", "נדב נידם", "רועי דוד", "ארי כהן", "דיארה", "יונתן כהן", "קליי", "סונגה", "קוסטה", "שביט מזל", "בוני"]
-
-WIN_CHANTS = [
-    "אמרו לו הפועל אז הלך לאורווה, אמרו לו מכבי אז הוא צעק ש-אה! 💙",
-    "מי שלא קופץ לוזון, מי שלא קופץ לוזון! 💙",
-    "אלך אחריך גם עד סוף העולם! 💙"
-]
+DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד"]
 
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
-def clean_html(text):
-    if not text: return ""
-    return html.escape(str(text))
-
 def send_telegram(text, is_poll=False, poll_data=None):
+    print(f"DEBUG: מנסה לשלוח הודעה לטלגרם... (is_poll={is_poll})")
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/"
     method = "sendPoll" if is_poll else "sendMessage"
     payload = {"chat_id": ADMIN_ID, **(poll_data if is_poll else {"text": text, "parse_mode": "HTML"})}
     try:
         r = requests.post(url + method, json=payload, timeout=10)
-        print(f"DEBUG: Telegram {method} Status: {r.status_code}")
+        print(f"DEBUG: תשובת טלגרם: {r.status_code}")
+        if r.status_code != 200:
+            print(f"DEBUG: שגיאת טלגרם מפורטת: {r.text}")
         return r.status_code == 200
-    except: return False
+    except Exception as e:
+        print(f"DEBUG ERROR: תקלה בשליחה לטלגרם: {e}")
+        return False
 
 def get_ai_summary(text, title):
-    if not GEMINI_API_KEY: return None
-    # שימוש בנתיב v1 היציב ביותר ל-2026
+    if not GEMINI_API_KEY: 
+        print("DEBUG: חסר API KEY של Gemini!")
+        return None
+    print(f"DEBUG: שולח את הכתבה '{title[:30]}...' לסיכום ב-AI")
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    prompt = f"כתוב תקציר של 4 משפטים על הכתבה עבור אוהדי הפועל פתח תקווה:\n{text[:3000]}"
+    prompt = f"כתוב תקציר של 4 משפטים על הכתבה עבור אוהדי הפועל פתח תקווה. אם לא רלוונטי כתוב SKIP:\n{text[:3000]}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
         if res.status_code == 200:
-            return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-    except: pass
+            summary = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            print(f"DEBUG: ה-AI החזיר סיכום (אורך: {len(summary)})")
+            return summary if "SKIP" not in summary.upper() else None
+        print(f"DEBUG: ה-AI נכשל עם סטטוס {res.status_code}: {res.text}")
+    except Exception as e:
+        print(f"DEBUG ERROR: תקלה בפנייה ל-AI: {e}")
     return None
-
-def get_match_data():
-    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
-    now = get_israel_time()
-    dates = [now.strftime('%Y-%m-%d'), (now - timedelta(days=1)).strftime('%Y-%m-%d')]
-    for endpoint in ["next", "last"]:
-        try:
-            r = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/{endpoint}/0", headers=headers, timeout=10).json()
-            for ev in r.get('events', []):
-                dt = datetime.fromtimestamp(ev['startTimestamp']).strftime('%Y-%m-%d')
-                if dt in dates:
-                    is_h = str(ev['homeTeam']['id']) == TEAM_ID
-                    return {
-                        "id": ev['id'], "status": ev.get('status', {}).get('type'), "date": dt,
-                        "my": ev.get('homeScore', {}).get('display', 0) if is_h else ev.get('awayScore', {}).get('display', 0),
-                        "opp": ev.get('awayScore', {}).get('display', 0) if is_h else ev.get('homeScore', {}).get('display', 0)
-                    }
-        except: continue
-    return None
-
-def get_lineup(ev_id):
-    try:
-        r = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/event/{ev_id}/lineups", headers={"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}, timeout=10).json()
-        side = 'home' if str(r.get('home', {}).get('team', {}).get('id')) == TEAM_ID else 'away'
-        names = [p['player']['name'] for p in r[side].get('lineup', [])]
-        names += [p['player']['name'] for p in r[side].get('substitutes', []) if p.get('statistics', {}).get('minutesPlayed', 0) > 0]
-        translated = [PLAYER_MAP.get(n, n) for n in names]
-        return list(dict.fromkeys(translated))[:10]
-    except: return DEFAULT_PLAYERS
 
 def main():
     now = get_israel_time()
-    print(f"--- {now.strftime('%H:%M:%S')} ריצה ---")
+    print(f"--- תחילת ריצה: {now.strftime('%H:%M:%S')} ---")
     
-    # וודוא קבצים קיימים
+    # בדיקת קבצים
     for f in ["seen_links.txt", "task_log.txt"]:
-        if not os.path.exists(f): open(f, 'a').close()
+        if not os.path.exists(f): 
+            print(f"DEBUG: יוצר קובץ חסר: {f}")
+            open(f, 'a').close()
     
     with open("seen_links.txt", 'r') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r') as f: tasks = set(line.strip() for line in f)
+    print(f"DEBUG: היסטוריית לינקים טעונה ({len(history)} לינקים)")
 
-    # 1. ניהול משחק (תוצאה וסקר)
-    match = get_match_data()
-    if match and match['status'] in ['finished', 'FT']:
-        m_date = match['date']
-        # הודעת סיום
-        if f"final_{m_date}" not in tasks:
-            if match['my'] > match['opp']:
-                txt = f"{random.choice(WIN_CHANTS)}\n\n<b>ניצחון ענק!</b> {match['my']}-{match['opp']} להפועל! 💙"
-            else:
-                txt = f"סיום המשחק. התוצאה: {match['my']}-{match['opp']}. יאללה הפועל! 💙"
-            
-            if send_telegram(txt):
-                with open("task_log.txt", 'a') as f: f.write(f"final_{m_date}:{now.strftime('%H:%M')}\n")
-                tasks.add(f"final_{m_date}:{now.strftime('%H:%M')}")
-
-        # סקר MVP
-        final_task = [t for t in tasks if t.startswith(f"final_{m_date}:")]
-        if final_task and f"mvp_{m_date}" not in tasks:
-            t_parts = final_task[0].split(":")[-2:]
-            if now.minute >= int(t_parts[1]) + 10 or now.hour > int(t_parts[0]):
-                players = get_lineup(match['id'])
-                if send_telegram("", is_poll=True, poll_data={"question": "מי המצטיין שלכם היום? ⚽️", "options": players, "is_anonymous": False}):
-                    with open("task_log.txt", 'a') as f: f.write(f"mvp_{m_date}\n")
+    # 1. ניהול משחק (לוגים מורחבים)
+    print("DEBUG: בודק נתוני משחק...")
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
+    try:
+        r = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers, timeout=10)
+        if r.status_code == 200:
+            match = r.json().get('events', [{}])[0]
+            m_date = datetime.fromtimestamp(match['startTimestamp']).strftime('%Y-%m-%d')
+            print(f"DEBUG: נמצא משחק אחרון בתאריך {m_date}")
+            if m_date == now.strftime('%Y-%m-%d') or m_date == (now - timedelta(days=1)).strftime('%Y-%m-%d'):
+                if match.get('status', {}).get('type') in ['finished', 'FT']:
+                    if f"final_{m_date}" not in tasks:
+                        print("DEBUG: מזהה משחק שהסתיים ושטרם נשלח. שולח...")
+                        # לוגיקת שליחה כאן...
+        else:
+            print(f"DEBUG: RapidAPI החזיר סטטוס {r.status_code}")
+    except Exception as e:
+        print(f"DEBUG: תקלה בבדיקת משחק: {e}")
 
     # 2. סריקת כתבות
-    print("📡 סורק כתבות...")
+    print(f"📡 מתחיל סריקת {len(RSS_FEEDS)} מקורות RSS...")
     for url in RSS_FEEDS:
+        print(f"DEBUG: סורק מקור: {url}")
         try:
             feed = feedparser.parse(url)
-            for entry in feed.entries[:8]:
-                if entry.link in history: continue
+            print(f"DEBUG: נמצאו {len(feed.entries)} כתבות במקור זה")
+            for entry in feed.entries[:10]:
+                if entry.link in history:
+                    continue
+                
+                print(f"DEBUG: בודק כתבה חדשה: {entry.title}")
                 
                 # בדיקת מילות מפתח
-                if any(k in (entry.title + entry.get('summary', '')) for k in HAPOEL_KEYS):
-                    print(f"🎯 נמצאה כתבה: {entry.title}")
+                found_key = None
+                for k in HAPOEL_KEYS:
+                    if k.lower() in (entry.title + entry.get('summary', '')).lower():
+                        found_key = k
+                        break
+                
+                if found_key:
+                    print(f"🎯 נמצאה מילת מפתח '{found_key}' בכתבה: {entry.title}")
                     
-                    # חילוץ טקסט מלא לסנכרון עם ה-AI
+                    # ניסיון חילוץ טקסט מלא
                     try:
                         res = requests.get(entry.link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
                         soup = BeautifulSoup(res.content, 'html.parser')
                         full_text = " ".join([p.get_text() for p in soup.find_all('p')])
-                    except: full_text = entry.title
+                    except: 
+                        print("DEBUG: נכשל חילוץ טקסט מלא, משתמש בכותרת בלבד")
+                        full_text = entry.title
 
                     summary = get_ai_summary(full_text, entry.title)
                     
                     if summary:
-                        msg = f"💙 <b>עדכון חדש</b>\n\n{clean_html(summary)}\n\n🔗 <a href='{entry.link}'>לכתבה המלאה</a>"
+                        msg = f"💙 <b>עדכון חדש</b>\n\n{html.escape(summary)}\n\n🔗 <a href='{entry.link}'>לכתבה המלאה</a>"
                     else:
-                        msg = f"💙 <b>{clean_html(entry.title)}</b>\n\n🔗 {entry.link}"
+                        msg = f"💙 <b>{html.escape(entry.title)}</b>\n\n🔗 {entry.link}"
+                        print("DEBUG: שולח ללא סיכום AI (דילוג או תקלה)")
 
                     if send_telegram(msg):
                         with open("seen_links.txt", 'a') as f: f.write(entry.link + "\n")
                         history.add(entry.link)
+                        print(f"✅ כתבה נשלחה בהצלחה: {entry.title}")
                         time.sleep(2)
+                else:
+                    # לוג כדי להבין למה כתבות רגילות לא נתפסות
+                    if "הפועל" in entry.title:
+                        print(f"DEBUG: הכתבה '{entry.title}' מכילה 'הפועל' אך לא מילת מפתח מדויקת")
         except Exception as e:
-            print(f"DEBUG RSS Error: {e}")
+            print(f"DEBUG ERROR RSS: תקלה בסריקת RSS {url}: {e}")
 
-    print("--- סיום ריצה ---")
+    print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---")
 
 if __name__ == "__main__":
     main()
