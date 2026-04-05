@@ -82,7 +82,9 @@ def send_to_telegram(text, photo_url=None, is_poll=False, poll_data=None, reply_
         return False
 
 def get_ai_summary(text, title, recent_summaries):
-    if not GEMINI_API_KEY: return None
+    if not GEMINI_API_KEY: 
+        print("DEBUG: Gemini API Key is missing!")
+        return None
     context = "\n".join(recent_summaries)
     prompt = (
         f"אתה עיתונאי ספורט עבור אוהדי הפועל פתח תקווה. "
@@ -92,9 +94,9 @@ def get_ai_summary(text, title, recent_summaries):
         f"טקסט: {text[:3500]}"
     )
     try:
-        # שימוש בגרסת v1 הרשמית והיציבה עם gemini-1.5-flash
-        api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        print(f"DEBUG: Attempting AI Summary using model: gemini-1.5-flash at v1 endpoint")
+        # שימוש בכתובת הכי יציבה: v1beta עם gemini-1.5-flash-latest
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+        print(f"DEBUG: Attempting AI Summary using model: gemini-1.5-flash-latest")
         
         res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         if res.status_code == 200:
