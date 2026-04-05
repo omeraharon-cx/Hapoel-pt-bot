@@ -37,16 +37,17 @@ HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "ה
 PLAYER_MAP = {
     "Omer Katz": "עומר כץ", "Shahar Rosen": "שחר רוזן", "Dror Nir": "דרור ניר",
     "Itay Rotman": "איתי רוטמן", "Orel Dgani": "אוראל דגני", "Alex Moussounda": "מוסונדה",
-    "Idan Cohen": "עידן כהן", "Noam Cohen": "נועם כהן", "Tomer Altman": "תומר אלטמן",
+    "Idan Cohen": "עידן כהן", "Noam Cohen": "נועם כהן", "Tomer Altman": "אלטמן",
     "Nadav Niddam": "נדב נידם", "Roee David": "רועי דוד", "Ari Cohen": "ארי כהן",
-    "Mamadi Diarra": "ממאדי דיארה", "Yonatan Cohen": "יונתן כהן", "Andrade Euclides Claye": "קליי",
+    "Mamadi Diarra": "דיארה", "Yonatan Cohen": "יונתן כהן", "Andrade Euclides Claye": "קליי",
     "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
 }
 
-# רשימת הגיבוי שביקשת
+# רשימת הגיבוי המדויקת שביקשת
 DEFAULT_PLAYERS = [
-    "עומר כץ", "אוראל דגני", "איתי רוטמן", "דרור ניר", "עידן כהן", 
-    "נדב נידם", "רועי דוד", "יונתן כהן", "מארק קוסטה", "שביט מזל", "קליי"
+    "עומר כץ", "שחר רוזן", "דרור ניר", "איתי רוטמן", "אוראל דגני", "מוסונדה",
+    "עידן כהן", "נועם כהן", "אלטמן", "נדב נידם", "רועי דוד", "ארי כהן",
+    "דיארה", "יונתן כהן", "קליי", "סונגה", "קוסטה", "שביט מזל", "בוני"
 ]
 
 WIN_CHANTS = [
@@ -91,16 +92,18 @@ def get_ai_summary(text, title, recent_summaries):
         f"טקסט: {text[:3500]}"
     )
     try:
-        # חזרה ל-v1beta עם שם מודל מפורש - זה השילוב הכי יציב
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # שימוש בגרסת v1 הרשמית והיציבה עם gemini-1.5-flash
+        api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        print(f"DEBUG: Attempting AI Summary using model: gemini-1.5-flash at v1 endpoint")
+        
         res = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         if res.status_code == 200:
             result = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             return result if "SKIP" not in result.upper() else None
         else:
-            print(f"DEBUG Gemini API Error {res.status_code}")
-            print(f"DEBUG Gemini Error Body: {res.text}") # זה יעזור לנו להבין בדיוק למה 404
-    except: pass
+            print(f"DEBUG Gemini Error {res.status_code}: {res.text}")
+    except Exception as e:
+        print(f"DEBUG Gemini Exception: {e}")
     return None
 
 def get_match_data():
@@ -137,7 +140,7 @@ def get_mvp_players(event_id):
 
 def main():
     now = get_israel_time()
-    print(f"--- ריצה: {now.strftime('%H:%M:%S')} ---")
+    print(f"--- {now.strftime('%H:%M:%S')} ריצה ---")
     db_file, task_file, sum_db = "seen_links.txt", "task_log.txt", "recent_summaries.txt"
     for f in [db_file, task_file, sum_db]:
         if not os.path.exists(f): open(f, 'a').close()
