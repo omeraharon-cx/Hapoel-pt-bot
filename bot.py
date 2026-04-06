@@ -9,7 +9,7 @@ import html
 import json
 from datetime import datetime, timedelta
 
-# הדפסה מיידית ללוגים של GitHub
+# הדפסה מיידית ללוגים
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות ליבה (Secrets) ---
@@ -22,7 +22,7 @@ RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 LEAGUE_TABLE_URL = "https://www.sport5.co.il/liga.aspx?FolderID=44"
 FALLBACK_POSTER = "https://www.hapoelpt.com/wp-content/uploads/2023/08/cropped-logo-1.png"
 
-# --- מילון תרגום קבוצות ליגת העל 2026 ---
+# --- תרגום קבוצות ליגת העל 2026 ---
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
     "Hapoel Beer Sheva": "הפועל באר שבע", "Beitar Jerusalem": "בית\"ר ירושלים",
@@ -52,13 +52,12 @@ PLAYER_MAP = {
     "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
 }
 
-# --- אירועים היסטוריים (ימי רביעי) ---
+# --- אירועים היסטוריים ---
 HISTORICAL_EVENTS = [
     "ב-1955 הפועל פ\"ת זכתה באליפות הראשונה בתולדותיה! 🏆",
     "נחום סטלמך כבש את השער המפורסם מול ברית המועצות ב-1956. ⚽",
     "הפועל פ\"ת מחזיקה בשיא של 5 אליפויות רצופות (1959-1963)! 💙",
-    "הזכייה האחרונה בגביע המדינה הייתה ב-1992. 🏆",
-    "האצטדיון המיתולוגי של הקבוצה היה 'האורווה'. 🏟️"
+    "הזכייה האחרונה בגביע המדינה הייתה ב-1992. 🏆"
 ]
 
 RSS_FEEDS = [
@@ -70,7 +69,8 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
-HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "עומר פרץ", "הפועל מבנה"]
+# עומר פרץ הוסר מהרשימה לבקשתך
+HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
 
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
@@ -97,23 +97,17 @@ def send_telegram(text, is_poll=False, poll_data=None, photo_url=None, with_tabl
         return r.status_code == 200
     except: return False
 
-def get_available_models():
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
-        res = requests.get(url, timeout=10).json()
-        models = [m['name'] for m in res.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-        models.sort(key=lambda x: '1.5-flash' not in x)
-        return models if models else ["models/gemini-1.5-flash"]
-    except: return ["models/gemini-1.5-flash"]
-
 def get_ai_summary(text, models, title):
     if not text or len(text) < 100: return None
+    # הנחיות מחמירות לסינון כתבות לא מהותיות
     prompt = (
         "### INSTRUCTIONS ###\n"
-        "1. Write a 3-sentence summary in Hebrew. Tone: Professional Sport Journalist, loyal to Hapoel Petah Tikva.\n"
-        "2. NICKNAMES: Use 'הפועל', 'הכחולים'. STRICTLY FORBIDDEN: 'לוזונים'.\n"
-        "3. CONTEXT: Focus on how this news affects Hapoel Petah Tikva specifically.\n"
-        f"### ARTICLE TITLE: {title} ###\n### TEXT ###\n{text[:2500]}"
+        "1. אתה עיתונאי ספורט ואוהד הפועל פתח תקווה. כתוב תקציר של 3 משפטים בטון ענייני ומכובד.\n"
+        "2. השתמש בכינויים 'הפועל' או 'הכחולים'. איסור חמור על המילה 'לוזונים'.\n"
+        "3. **קריטי:** נתח האם הכתבה עוסקת בהפועל פתח תקווה באופן מהותי (חדשות, משחק, רכש, ניתוח).\n"
+        "4. אם הקבוצה מוזכרת רק כבדרך אגב (למשל: רק בטבלה, או במשפט אחד כקבוצה שתשחק נגד מישהו בעתיד), החזר רק: SKIP\n"
+        "5. אל תכתוב שלום או פתיח. התחל ישר בתוכן.\n\n"
+        f"### ARTICLE TITLE: {title} ###\n### TEXT ###\n{text[:3000]}"
     )
     for model in models:
         try:
@@ -128,7 +122,7 @@ def get_ai_summary(text, models, title):
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
-    print(f"--- {now_il.strftime('%H:%M:%S')} (Israel Time) ריצה ---")
+    print(f"--- {now_il.strftime('%H:%M:%S')} ריצה ---")
     
     # טעינת קבצים
     for f in ["seen_links.txt", "task_log.txt"]:
@@ -138,8 +132,8 @@ def main():
 
     # 1. הודעות מתוזמנות
     if now_il.hour == 15 and f"betting_{today_str}" not in tasks:
-        if send_telegram("💰 *זמן הימורים!* מה תהיה התוצאה היום? כתבו בתגובות! 👇"):
-            with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
+        send_telegram("💰 *זמן הימורים!* מה תהיה התוצאה היום? כתבו בתגובות! 👇")
+        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
 
     if now_il.weekday() == 2 and now_il.hour == 12 and f"history_{today_str}" not in tasks:
         events = random.sample(HISTORICAL_EVENTS, 3)
@@ -147,7 +141,7 @@ def main():
         if send_telegram(msg):
             with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
-    # 2. ניהול משחקים (RapidAPI)
+    # 2. ניהול משחקים
     try:
         headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
         
@@ -157,8 +151,7 @@ def main():
             next_ev = r_next['events'][0]
             ev_time_il = datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)
             if ev_time_il.strftime('%Y-%m-%d') == today_str and f"matchday_{today_str}" not in tasks:
-                is_home = str(next_ev['homeTeam']['id']) == TEAM_ID
-                opp = next_ev['awayTeam']['name'] if is_home else next_ev['homeTeam']['name']
+                opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
                 msg = f"הפועל שלנו תעלה בעוד כמה שעות לכר הדשא לשחק נגד *{opp_heb}*.\n\nלתת הכל בשביל הסמל, כחול עולה עולה - יאללה הפועל מלחמה 💙"
                 if send_telegram(msg, photo_url=FALLBACK_POSTER):
@@ -172,8 +165,7 @@ def main():
             if l_time_il.strftime('%Y-%m-%d') == today_str and last_ev.get('status', {}).get('type') in ['finished', 'FT']:
                 if f"final_{today_str}" not in tasks:
                     is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
-                    my = last_ev['homeScore']['display'] if is_h else last_ev['awayScore']['display']
-                    opp = last_ev['awayScore']['display'] if is_h else last_ev['homeScore']['display']
+                    my, opp = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
                     opp_name = last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name']
                     opp_heb = TEAM_TRANSLATION.get(opp_name, opp_name)
                     
@@ -188,7 +180,7 @@ def main():
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}:{now_il.strftime('%H:%M')}\n")
                         tasks.add(f"final_{today_str}:{now_il.strftime('%H:%M')}")
 
-                # סקר MVP (10 דקות אחרי)
+                # סקר MVP
                 final_entry = [t for t in tasks if t.startswith(f"final_{today_str}:")]
                 if final_entry and f"mvp_{today_str}" not in tasks:
                     f_time_str = final_entry[0].split(":")[-2:]
@@ -199,12 +191,17 @@ def main():
                             side = 'home' if str(l_res['home']['team']['id']) == TEAM_ID else 'away'
                             players = [PLAYER_MAP.get(p['player']['name'], p['player']['name']) for p in l_res[side]['lineup']]
                         except: players = list(PLAYER_MAP.values())
-                        if send_telegram("", is_poll=True, poll_data={"question": "מי המצטיין שלכם היום? ⚽️", "options": players[:10], "is_anonymous": False}):
-                            with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
+                        send_telegram("", is_poll=True, poll_data={"question": "מי המצטיין?", "options": players[:10], "is_anonymous": False})
+                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
     except: pass
 
-    # 3. סריקת כתבות (ללא כפילויות)
-    models = get_available_models()
+    # 3. סריקת כתבות
+    try:
+        url_models = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        models = [m['name'] for m in requests.get(url_models, timeout=10).json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+        models.sort(key=lambda x: '1.5-flash' not in x)
+    except: models = ["models/gemini-1.5-flash"]
+
     for feed_url in RSS_FEEDS:
         try:
             resp = requests.get(feed_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
@@ -220,11 +217,12 @@ def main():
                     content = " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
                 except: content = entry.title
 
+                # סריקה בתוך הכתבה
                 if any(k.lower() in (title + content).lower() for k in HAPOEL_KEYS):
                     summary = get_ai_summary(content, models, title)
-                    if summary == "SKIP": continue
-                    summary_final = summary if summary else "הכתבה ללא תקציר 🙏"
-                    msg = f"*יש עדכון חדש על הפועל 💙*\n\n{html.escape(summary_final)}\n\n🔗 [לכתבה המלאה]({link})"
+                    if not summary: continue # אם ה-AI החזיר SKIP או נכשל - מדלגים
+                    
+                    msg = f"*יש עדכון חדש על הפועל 💙*\n\n{html.escape(summary)}\n\n🔗 [לכתבה המלאה]({link})"
                     if send_telegram(msg):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(f"{link} | {title}\n")
                         history.add(link)
