@@ -117,7 +117,7 @@ def get_ai_summary(text, models, title):
                 print(f"LOG AI: מודל {model} החזיר תשובה (אורך: {len(out)})")
                 return out if "SKIP" not in out.upper() else "SKIP"
             print(f"LOG AI: מודל {model} נכשל עם סטטוס {res.status_code}")
-        exceptException as e:
+        except Exception as e:
             print(f"LOG AI ERROR: {model} exception: {e}")
     return None
 
@@ -139,7 +139,21 @@ def main():
     print("LOG: בודק נתוני משחק ב-API...")
     try:
         headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
-        # בדיקת סיום משחק
+        
+        # Match Day
+        r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers, timeout=10).json()
+        if r_next.get('events'):
+            next_ev = r_next['events'][0]
+            ev_date = (datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
+            if ev_date == today_str and f"matchday_{today_str}" not in tasks:
+                print("LOG: מזהה יום משחק היום!")
+                opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
+                opp_heb = TEAM_TRANSLATION.get(opp, opp)
+                msg = f"הפועל שלנו תעלה בעוד כמה שעות לכר הדשא לשחק נגד *{opp_heb}*.\n\nלתת הכל בשביל הסמל, כחול עולה עולה - יאללה הפועל מלחמה 💙"
+                if send_telegram(msg, photo_url=FALLBACK_POSTER):
+                    with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
+
+        # סיום משחק
         r_last = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers, timeout=10).json()
         if r_last.get('events'):
             last_ev = r_last['events'][0]
@@ -147,8 +161,21 @@ def main():
             if l_date == today_str and last_ev.get('status', {}).get('type') in ['finished', 'FT']:
                 print(f"LOG: זוהה משחק שהסתיים היום בסטטוס {last_ev['status']['type']}.")
                 if f"final_{today_str}" not in tasks:
-                    # לוגיקת הודעת סיום... (כפי שהייתה בקוד הקודם)
-                    print("LOG: שולח הודעת סיום משחק.")
+                    is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
+                    my, opp = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
+                    opp_name = last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name']
+                    opp_heb = TEAM_TRANSLATION.get(opp_name, opp_name)
+                    
+                    if my > opp:
+                        txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות במשחק נגד {opp_heb}\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
+                    elif my == opp:
+                        txt = f"תיקו בסיום המשחק של הפועל ({my}-{opp}), ממשיכים הלאה בכל הכוח. יאללה הפועלללל 💙"
+                    else:
+                        txt = f"הפסד בסיום המשחק ({my}-{opp}), לא נורא מרימים את הראש וממשיכים הלאה בכל הכוחח.\n\nיאלה הפועל מלחמההה 💙"
+                    
+                    if send_telegram(txt, with_table=True):
+                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}:{now_il.strftime('%H:%M')}\n")
+                        tasks.add(f"final_{today_str}:{now_il.strftime('%H:%M')}")
     except Exception as e:
         print(f"LOG ERROR: API check failed: {e}")
 
@@ -183,7 +210,7 @@ def main():
                     res_art = requests.get(entry.link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
                     soup = BeautifulSoup(res_art.content, 'html.parser')
                     content = " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
-                except: content = title
+                except: content = entry.title
 
                 # בדיקת מילות מפתח
                 if any(k.lower() in (title + content).lower() for k in HAPOEL_KEYS):
