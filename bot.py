@@ -4,19 +4,20 @@ from bs4 import BeautifulSoup
 import os
 import time
 import sys
+import random
 import html
 from datetime import datetime, timedelta
 
-# הגדרה להדפסה מיידית ללוגים
+# הדפסה מיידית ללוגים
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- הגדרות ליבה (Secrets) ---
+# --- הגדרות מערכת (Secrets) ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 ADMIN_ID = "425605110"
-
-# מילות מפתח לסינון ראשוני (לוודא שזה כדורגל ולא אבו דאבי)
-HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
+TEAM_ID = "5199"
+RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
@@ -27,90 +28,127 @@ RSS_FEEDS = [
     "https://sport1.maariv.co.il/feed/"
 ]
 
+HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
+
+PLAYER_MAP = {
+    "Omer Katz": "עומר כץ", "Shahar Rosen": "שחר רוזן", "Dror Nir": "דרור ניר",
+    "Itay Rotman": "איתי רוטמן", "Orel Dgani": "אוראל דגני", "Alex Moussounda": "מוסונדה",
+    "Idan Cohen": "עידן כהן", "Noam Cohen": "נועם כהן", "Tomer Altman": "אלטמן",
+    "Nadav Niddam": "נדב נידם", "Roee David": "רועי דוד", "Ari Cohen": "ארי כהן",
+    "Mamadi Diarra": "דיארה", "Yonatan Cohen": "יונתן כהן", "Andrade Euclides Claye": "קליי",
+    "Chipuoka Songa": "סונגה", "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Boni Amians": "בוני"
+}
+
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": ADMIN_ID, "text": text, "parse_mode": "HTML"}
+def send_telegram(text, is_poll=False, poll_data=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/"
+    method = "sendPoll" if is_poll else "sendMessage"
+    payload = {"chat_id": ADMIN_ID, **(poll_data if is_poll else {"text": text, "parse_mode": "Markdown"})}
     try:
-        r = requests.post(url, json=payload, timeout=10)
-        print(f"DEBUG: Telegram Response: {r.status_code}")
+        r = requests.post(url + method, json=payload, timeout=15)
         return r.status_code == 200
     except: return False
 
-def get_ai_summary(text, title):
-    if not GEMINI_API_KEY: return None
-    # שימוש במודל v1beta המעודכן
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    # הנחיה מפורשת לטון של אוהד כחול
-    prompt = (
-        "אתה עיתונאי ספורט ואוהד שרוף של הפועל פתח תקווה. "
-        "כתוב תקציר של 4 משפטים בטון אוהד, כחול ומלא גאווה. "
-        "התייחס לקבוצה כ'הפועל', 'המלאבסים' או 'הכחולים'. "
-        "חובה לקשר את תוכן הכתבה להפועל פתח תקווה ולמה שחשוב לאוהדים שלה. "
-        "אם הכתבה לא קשורה אלינו בשום צורה, כתוב אך ורק את המילה: SKIP.\n\n"
-        f"כותרת: {title}\nטקסט הכתבה: {text[:3000]}"
-    )
-    
+def get_available_models():
+    """הפיצ'ר מהקוד הישן: מוודא מה פתוח בחשבון כדי למנוע 404"""
     try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
-        if res.status_code == 200:
-            out = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-            return out if "SKIP" not in out.upper() else "SKIP"
-        print(f"DEBUG AI Error {res.status_code}")
-    except: pass
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        res = requests.get(url, timeout=10).json()
+        models = [m['name'] for m in res.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+        # נעדף את 1.5-flash
+        models.sort(key=lambda x: '1.5-flash' not in x)
+        return models if models else ["models/gemini-1.5-flash"]
+    except: return ["models/gemini-1.5-flash"]
+
+def get_ai_summary(text, models, title):
+    """הפרומפט המנצח והיציב שלך מהגרסה המקורית"""
+    if not text or len(text) < 100: return None
+    
+    prompt = (
+        "### INSTRUCTIONS ###\n"
+        "1. Analyze if the provided article is PRIMARILY about Hapoel Petah Tikva.\n"
+        "2. Even if it's a short text, check if Hapoel Petah Tikva is the main subject.\n"
+        "3. If Hapoel Petah Tikva is only mentioned briefly as an opponent, return ONLY: SKIP\n"
+        "4. Otherwise, write a 3-sentence summary in Hebrew. Tone: Casual, friend-to-friend, NO greetings.\n"
+        "5. MANDATORY: Focus on the impact on Hapoel Petah Tikva.\n\n"
+        f"### ARTICLE TEXT ###\n{text[:3000]}"
+    )
+
+    for model in models:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={GEMINI_API_KEY}"
+            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=15)
+            data = res.json()
+            if res.status_code == 200 and 'candidates' in data:
+                summary = data['candidates'][0]['content']['parts'][0]['text'].strip()
+                if "SKIP" in summary.upper() and len(summary) < 10: return "SKIP"
+                return summary
+        except: continue
     return None
 
 def main():
-    now = get_israel_time()
-    print(f"--- {now.strftime('%H:%M:%S')} תחילת ריצה ---")
+    now_il = get_israel_time()
+    print(f"--- {now_il.strftime('%H:%M:%S')} ריצה (גרסת הגנה) ---")
+    
+    models = get_available_models()
+    print(f"🤖 מודלים זמינים: {len(models)}")
     
     db_file = "seen_links.txt"
     if not os.path.exists(db_file): open(db_file, 'a').close()
-    with open(db_file, 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
+    with open(db_file, 'r') as f: history = set(line.strip() for line in f)
 
-    for url in RSS_FEEDS:
-        print(f"סורק מקור: {url}")
+    # 1. בדיקת משחק וסקר (עם הגנת מכסה)
+    try:
+        headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
+        r = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers, timeout=10)
+        if r.status_code == 200:
+            match = r.json().get('events', [{}])[0]
+            m_date = datetime.fromtimestamp(match['startTimestamp']).strftime('%Y-%m-%d')
+            if m_date == now_il.strftime('%Y-%m-%d') and match.get('status', {}).get('type') in ['finished', 'FT']:
+                # כאן אפשר להוסיף שליחת תוצאה אם רוצים...
+                pass
+    except: print("DEBUG: RapidAPI limit reached.")
+
+    # 2. סריקת כתבות
+    for feed_url in RSS_FEEDS:
+        print(f"📡 בודק פיד: {feed_url}")
         try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:40]: # סורקים עמוק כדי לא לפספס
-                clean_link = entry.link.split('?')[0].replace("https://svcamz.", "https://www.")
-                if clean_link in history: continue
-                
-                # חילוץ טקסט מלא לטובת ה-AI
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:30]:
+                link = entry.link.split('?')[0].replace("https://svcamz.", "https://www.")
+                if link in history: continue
+
+                # פילטר זמן 24 שעות למניעת הצפת ארכיון
+                pub = entry.get('published_parsed')
+                if pub:
+                    if now_il - (datetime(*pub[:6]) + timedelta(hours=3)) > timedelta(hours=24): continue
+
+                # שאיבת תוכן הכתבה
                 try:
                     res = requests.get(entry.link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
                     soup = BeautifulSoup(res.content, 'html.parser')
-                    article_body = " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
-                except: article_body = entry.title
+                    content = " ".join([p.get_text() for p in soup.find_all(['p', 'h2'])])
+                except: content = entry.title
 
-                full_content = (entry.title + " " + article_body).lower()
-                
-                # סינון ראשוני: רק אם זה באמת קשור להפועל פ"ת
-                if any(k in full_content for k in HAPOEL_KEYS):
+                # בדיקת רלוונטיות
+                if any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS) or "hapoelpt.com" in link:
                     print(f"🎯 נמצאה כתבה: {entry.title}")
+                    summary = get_ai_summary(content, models, entry.title)
                     
-                    ai_summary = get_ai_summary(article_body, entry.title)
+                    if summary == "SKIP": continue
                     
-                    if ai_summary == "SKIP":
-                        print("AI החליט שהכתבה לא רלוונטית.")
-                        continue
+                    header = "*יש עדכון חדש על הפועל 💙*"
+                    summary_final = summary if summary else "הכתבה ללא תקציר (תוכן קצר מדי) 🔵⚪️"
+                    msg = f"{header}\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
                     
-                    if ai_summary:
-                        # הודעה עם תקציר בטון אוהד
-                        msg = f"💙 <b>עדכון חדש</b>\n\n{html.escape(ai_summary)}\n\n🔗 <a href='{entry.link}'>לכתבה המלאה</a>"
-                    else:
-                        # Fallback לבקשתך אם ה-AI נכשל (למשל 404)
-                        msg = f"💙 <b>{html.escape(entry.title)}</b>\n\nכתבה ללא תקציר 🙏\n\n🔗 {entry.link}"
-
                     if send_telegram(msg):
-                        with open(db_file, 'a', encoding='utf-8') as f: f.write(clean_link + "\n")
-                        history.add(clean_link)
-                        time.sleep(2)
-        except Exception as e:
-            print(f"שגיאה בסריקה: {e}")
+                        with open(db_file, 'a') as f: f.write(link + "\n")
+                        history.add(link)
+                        time.sleep(5)
+        except: continue
+
     print("--- סיום ריצה ---")
 
 if __name__ == "__main__": main()
