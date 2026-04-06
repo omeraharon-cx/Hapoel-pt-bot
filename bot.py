@@ -9,7 +9,7 @@ import html
 import json
 from datetime import datetime, timedelta
 
-# הגדרה להדפסה מיידית ללוגים
+# הדפסה מיידית ללוגים
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות ליבה (Secrets) ---
@@ -22,13 +22,13 @@ RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 LEAGUE_TABLE_URL = "https://www.sport5.co.il/liga.aspx?FolderID=44"
 FALLBACK_POSTER = "https://www.hapoelpt.com/wp-content/uploads/2023/08/cropped-logo-1.png"
 
-# --- מקורות ספורט בלבד (עודכן ל-2026) ---
+# --- מקורות ספורט בלבד ---
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
     "https://www.one.co.il/cat/rss/",
-    "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64",
-    "https://www.ynet.co.il/Integration/StoryRss538.xml",  # ספורט Ynet בלבד
-    "https://rss.walla.co.il/feed/7",                     # ספורט וואלה בלבד (פיד 7)
+    "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64", # ליגת העל - ספורט 5
+    "https://www.ynet.co.il/Integration/StoryRss538.xml",        # ספורט Ynet
+    "https://rss.walla.co.il/feed/7",                           # ספורט וואלה
     "https://sport1.maariv.co.il/feed/"
 ]
 
@@ -79,20 +79,9 @@ def send_telegram(text, is_poll=False, poll_data=None, photo_url=None, with_tabl
     
     try:
         r = requests.post(url + method, data=payload, timeout=20)
-        print(f"LOG: Telegram {method} Status: {r.status_code}")
+        print(f"LOG: Telegram Status: {r.status_code}")
         return r.status_code == 200
-    except Exception as e:
-        print(f"LOG ERROR: Telegram failed: {e}")
-        return False
-
-def get_available_models():
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
-        res = requests.get(url, timeout=10).json()
-        models = [m['name'] for m in res.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-        models.sort(key=lambda x: '1.5-flash' not in x)
-        return models if models else ["models/gemini-1.5-flash"]
-    except: return ["models/gemini-1.5-flash"]
+    except: return False
 
 def get_ai_summary(text, models, title):
     if not text or len(text) < 100: return None
@@ -116,33 +105,59 @@ def get_ai_summary(text, models, title):
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
-    print(f"--- {now_il.strftime('%H:%M:%S')} תחילת ריצה (ספורט בלבד) ---")
+    print(f"--- {now_il.strftime('%H:%M:%S')} תחילת ריצה ---")
     
-    models = get_available_models()
+    # טעינת מודלים
+    try:
+        res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", timeout=10).json()
+        models = [m['name'] for m in res_m.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+        models.sort(key=lambda x: '1.5-flash' not in x)
+    except: models = ["models/gemini-1.5-flash"]
+
+    # טעינת זיכרון
     for f in ["seen_links.txt", "task_log.txt"]:
         if not os.path.exists(f): open(f, 'a').close()
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
 
-    # בדיקת משחקים (API)
+    # ניהול משחקים (API)
     try:
-        headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
-        r_last = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers, timeout=10).json()
+        headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
+        r_last = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers_api, timeout=10).json()
         if r_last.get('events'):
             last_ev = r_last['events'][0]
             l_date = (datetime.fromtimestamp(last_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
             if l_date == today_str and last_ev.get('status', {}).get('type') in ['finished', 'FT']:
                 if f"final_{today_str}" not in tasks:
-                    # (לוגיקת הודעת סיום...)
-                    pass
+                    is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
+                    my, opp = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
+                    opp_n = last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name']
+                    opp_h = TEAM_TRANSLATION.get(opp_n, opp_n)
+                    
+                    if my > opp:
+                        txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות במשחק נגד {opp_h}\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
+                    elif my == opp:
+                        txt = f"תיקו בסיום המשחק של הפועל ({my}-{opp}), ממשיכים הלאה בכל הכוח. יאללה הפועלללל 💙"
+                    else:
+                        txt = f"הפסד בסיום המשחק ({my}-{opp}), לא נורא מרימים את הראש וממשיכים הלאה בכל הכוחח.\n\nיאלה הפועל מלחמההה 💙"
+                    
+                    if send_telegram(txt, with_table=True):
+                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}:{now_il.strftime('%H:%M')}\n")
     except: pass
 
     # סריקת כתבות
-    print(f"LOG: סורק {len(RSS_FEEDS)} מקורות ספורט...")
+    print(f"LOG: סורק {len(RSS_FEEDS)} מקורות...")
     for feed_url in RSS_FEEDS:
         print(f"📡 פיד: {feed_url}")
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            # Headers מחמירים ביותר כדי לעבור את ספורט 5
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            }
             resp = requests.get(feed_url, headers=headers, timeout=30)
             feed = feedparser.parse(resp.content)
             print(f"🔍 נמצאו {len(feed.entries)} כתבות.")
@@ -152,13 +167,9 @@ def main():
                 title = entry.title
                 if link in history or any(title[:25] in h for h in history): continue
                 
-                print(f"🧐 בוחן כתבה: {title}")
+                print(f"🧐 בוחן: {title}")
                 pub = entry.get('published_parsed')
-                if pub:
-                    pub_dt = datetime(*pub[:6]) + timedelta(hours=3)
-                    if now_il - pub_dt > timedelta(hours=72):
-                        print(f"⏰ ישנה מדי ({pub_dt.strftime('%d/%m %H:%M')}).")
-                        continue
+                if pub and now_il - (datetime(*pub[:6]) + timedelta(hours=3)) > timedelta(hours=72): continue
 
                 try:
                     res_art = requests.get(entry.link, headers=headers, timeout=15)
@@ -167,22 +178,18 @@ def main():
                 except: content = entry.title
 
                 if any(k.lower() in (title + content).lower() for k in HAPOEL_KEYS):
-                    print(f"🎯 נמצאה התאמה. שולח ל-AI...")
+                    print("🎯 נמצאה התאמה להפועל פ\"ת. שולח ל-AI...")
                     summary = get_ai_summary(content, models, title)
-                    if summary == "SKIP":
-                        print("🚫 AI החליט לדלג.")
+                    if summary == "SKIP": continue
+                    
+                    summary_final = summary if summary else "הכתבה ללא תקציר 🙏"
+                    msg = f"*יש עדכון חדש על הפועל 💙*\n\n{html.escape(summary_final)}\n\n🔗 [לכתבה המלאה]({link})"
+                    if send_telegram(msg):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(f"{link} | {title}\n")
-                        continue
-                    if summary:
-                        msg = f"*יש עדכון חדש על הפועל 💙*\n\n{html.escape(summary)}\n\n🔗 [לכתבה המלאה]({link})"
-                        if send_telegram(msg):
-                            with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(f"{link} | {title}\n")
-                            history.add(link)
-                            time.sleep(5)
-                else:
-                    print("❌ לא רלוונטי.")
+                        history.add(link)
+                        time.sleep(5)
         except Exception as e:
-            print(f"LOG ERROR: פיד {feed_url}: {e}")
+            print(f"LOG ERROR: שגיאה בפיד {feed_url}: {e}")
 
     print("--- סיום ריצה ---")
 
