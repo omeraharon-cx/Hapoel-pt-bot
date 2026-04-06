@@ -16,16 +16,17 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ADMIN_ID = "425605110"
 
+# מקורות ספורט מזוקקים בלבד (כמו ב-26 לחודש)
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
     "https://www.one.co.il/cat/rss/",
     "https://www.sport5.co.il/RSS.aspx",
-    "https://www.ynet.co.il/Integration/StoryRss1854.xml",
-    "https://rss.walla.co.il/feed/3",
+    "https://www.ynet.co.il/Integration/StoryRss1854.xml", # ספורט Ynet
+    "https://rss.walla.co.il/feed/3", # ספורט וואלה
     "https://sport1.maariv.co.il/feed/"
 ]
 
-HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
+HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "עומר פרץ", "הפועל מבנה"]
 
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
@@ -39,6 +40,7 @@ def send_telegram(text):
     except: return False
 
 def get_available_models():
+    """הפונקציה שעבדה ב-26 לחודש ומנעה 404"""
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
         res = requests.get(url, timeout=10).json()
@@ -51,8 +53,8 @@ def get_ai_summary(text, models, title):
     if not text or len(text) < 100: return None
     prompt = (
         "### INSTRUCTIONS ###\n"
-        "1. Write a 3-sentence summary in Hebrew. Tone: Casual, friend-to-friend, NO greetings.\n"
-        "2. Focus ONLY on Hapoel Petah Tikva. If not the main subject, return ONLY: SKIP\n\n"
+        "1. אתה אוהד הפועל פתח תקווה. כתוב תקציר של 3 משפטים בטון חברתי וכחול.\n"
+        "2. קשר את הכתבה להפועל פתח תקווה. אם לא רלוונטי, החזר רק: SKIP\n\n"
         f"### ARTICLE TEXT ###\n{text[:3000]}"
     )
     for model in models:
@@ -69,7 +71,7 @@ def get_ai_summary(text, models, title):
 
 def main():
     now_il = get_israel_time()
-    print(f"--- {now_il.strftime('%H:%M:%S')} ריצה (גרסת לוגים מורחבת) ---")
+    print(f"--- {now_il.strftime('%H:%M:%S')} ריצה נקייה ---")
     
     models = get_available_models()
     print(f"🤖 מודלים זמינים: {len(models)}")
@@ -81,53 +83,43 @@ def main():
     for feed_url in RSS_FEEDS:
         print(f"📡 בודק פיד: {feed_url}")
         try:
-            feed = feedparser.parse(feed_url)
+            # הוספת Headers כדי שספורט 5 לא יחסום אותנו
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            resp = requests.get(feed_url, headers=headers, timeout=15)
+            feed = feedparser.parse(resp.content)
+            
+            print(f"🔍 נמצאו {len(feed.entries)} כתבות.")
             for entry in feed.entries[:40]:
                 link = entry.link.split('?')[0].replace("https://svcamz.", "https://www.")
-                title = entry.title
-                
-                # לוג מעקב לכל כתבה
-                print(f"🔍 בוחן: {title[:50]}...")
+                if link in history: continue
 
-                if link in history:
-                    print("⏭️ כבר נשלחה בעבר. מדלג.")
-                    continue
-
-                # פילטר זמן - הגדלתי ל-72 שעות כדי לתפוס את יום ראשון
+                # פילטר זמן 72 שעות (לתפוס את שלשום)
                 pub = entry.get('published_parsed')
                 if pub:
                     pub_dt = datetime(*pub[:6]) + timedelta(hours=3)
-                    if now_il - pub_dt > timedelta(hours=72):
-                        print(f"⏰ ישנה מדי ({pub_dt.strftime('%d/%m %H:%M')}). מדלג.")
-                        continue
+                    if now_il - pub_dt > timedelta(hours=72): continue
 
                 # שאיבת תוכן
                 try:
-                    res = requests.get(entry.link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                    res = requests.get(entry.link, headers=headers, timeout=10)
                     soup = BeautifulSoup(res.content, 'html.parser')
-                    content = " ".join([p.get_text() for p in soup.find_all(['p', 'h2'])])
-                except: content = title
+                    content = " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
+                except: content = entry.title
 
-                # בדיקת מילות מפתח
-                if any(k.lower() in (title + content).lower() for k in HAPOEL_KEYS) or "hapoelpt.com" in link:
-                    print(f"🎯 נמצאה התאמה! שולח ל-AI...")
-                    summary = get_ai_summary(content, models, title)
+                if any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
+                    print(f"🎯 נמצאה כתבה: {entry.title}")
+                    summary = get_ai_summary(content, models, entry.title)
                     
-                    if summary == "SKIP":
-                        print("🚫 AI החליט שהכתבה לא מספיק רלוונטית.")
-                        continue
+                    if summary == "SKIP": continue
                     
                     header = "*יש עדכון חדש על הפועל 💙*"
-                    summary_final = summary if summary else "הכתבה ללא תקציר (תוכן קצר מדי) 🔵⚪️"
+                    summary_final = summary if summary else "הכתבה ללא תקציר 🙏"
                     msg = f"{header}\n\n{summary_final}\n\n🔗 [לכתבה המלאה]({link})"
                     
                     if send_telegram(msg):
                         with open(db_file, 'a') as f: f.write(link + "\n")
                         history.add(link)
-                        print(f"✅ נשלחה בהצלחה!")
                         time.sleep(5)
-                else:
-                    print("❌ לא נמצאו מילות מפתח רלוונטיות.")
         except Exception as e:
             print(f"⚠️ שגיאה בפיד {feed_url}: {e}")
 
