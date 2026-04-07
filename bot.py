@@ -8,7 +8,9 @@ from datetime import datetime
 ADMIN_ID = "425605110"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
-FALLBACK_POSTER = "https://www.hapoelpt.com/wp-content/uploads/2023/08/cropped-logo-1.png"
+
+# הפוסטר החדש והמטורף שצירפת!
+MATCHDAY_TIFO = "https://hapoelpt.com/assets/images/tifo_samurai.jpg"
 
 # סגל שחקנים מעודכן (תוכנית ב') - מוגבל ל-10 עבור הסקר
 DEFAULT_PLAYERS = [
@@ -41,22 +43,22 @@ def send_telegram_test(method, payload):
         return False
 
 def run_full_simulation():
-    print("🚀 מתחיל סימולציה מלאה (גרסה סופית לטסט)...")
+    print("🚀 מתחיל סימולציה מלאה (גרסה סופית עם הפוסטר החדש)...")
     
     opp_heb = "טסט" 
 
-    # --- 1. הודעת Matchday עם פוסטר (בוקר) ---
+    # --- 1. הודעת Matchday עם הפוסטר החדש! ---
     print("שולח Matchday...")
     md_text = f"הפועל שלנו תעלה בעוד כמה שעות לכר הדשא לשחק נגד *{opp_heb}*.\n\nלתת הכל בשביל הסמל, כחול עולה עולה - יאללה הפועל מלחמה 💙"
     payload_md = {
         "chat_id": ADMIN_ID,
-        "photo": FALLBACK_POSTER,
+        "photo": MATCHDAY_TIFO, # כאן מוגדר הפוסטר החדש
         "caption": md_text,
         "parse_mode": "Markdown"
     }
     send_telegram_test("sendPhoto", payload_md)
 
-    # --- 2. סקר הימורים (15:00) ---
+    # --- 2. סקר הימורים ---
     print("שולח סקר הימורים...")
     payload_bet = {
         "chat_id": ADMIN_ID,
@@ -89,7 +91,7 @@ def run_full_simulation():
     }
     send_telegram_test("sendPoll", payload_mvp)
 
-    # --- 5. פינת ההיסטוריה (יום רביעי) ---
+    # --- 5. פינת ההיסטוריה ---
     print("שולח פינת היסטוריה...")
     events = random.sample(HISTORICAL_EVENTS, 3)
     hist_msg = "📜 *פינת ההיסטוריה הכחולה:*\n\n" + "\n".join([f"🔹 {e}" for e in events])
