@@ -1,142 +1,63 @@
-import feedparser
 import requests
-from bs4 import BeautifulSoup
-import os
-import time
-import sys
 import random
-import html
 import json
+import os
 from datetime import datetime, timedelta
 
-sys.stdout.reconfigure(encoding='utf-8')
-
-# --- הגדרות ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# --- הגדרות בסיס לטסט ---
 ADMIN_ID = "425605110"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 LEAGUE_TABLE_URL = "https://www.sport5.co.il/liga.aspx?FolderID=44"
+FALLBACK_POSTER = "https://www.hapoelpt.com/wp-content/uploads/2023/08/cropped-logo-1.png"
 
-# מקורות RSS - הוספתי נתיבים חלופיים לספורט 5
-RSS_FEEDS = [
-    "https://www.hapoelpt.com/blog-feed.xml",
-    "https://www.one.co.il/cat/rss/",
-    "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64",
-    "https://www.sport5.co.il/RSS.aspx", 
-    "https://www.ynet.co.il/Integration/StoryRss2.xml",
-    "https://rss.walla.co.il/feed/7",
-    "https://sport1.maariv.co.il/feed/"
+WIN_CHANTS = [
+    "כמו דמיון חופשי שנינו ביחד רק את ואני... 💙",
+    "כחול עולה עולה, כחול עולה עולה! 💙",
+    "מי שלא קופץ לוזון, מי שלא קופץ לוזון! 💙",
+    "אלך אחריך גם עד סוף העולם! 💙"
 ]
 
-HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
+DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד", "איתי רוטמן", "דרור ניר", "עידן כהן"]
 
-def get_israel_time():
-    return datetime.utcnow() + timedelta(hours=3)
-
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": ADMIN_ID, "text": text, "parse_mode": "Markdown"}
-    try:
-        r = requests.post(url, json=payload, timeout=20)
-        return r.status_code == 200
-    except: return False
-
-def get_ai_summary(text, title):
-    """מסכם רק אם הפועל פ"ת היא הנושא המרכזי"""
-    if not GEMINI_API_KEY: return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+def send_telegram_test(text, is_poll=False, poll_data=None, photo_url=None, with_table=False):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/"
+    payload = {"chat_id": ADMIN_ID, "parse_mode": "Markdown"}
+    if with_table:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": LEAGUE_TABLE_URL}]]})
+    if photo_url:
+        method, payload = "sendPhoto", {**payload, "photo": photo_url, "caption": text}
+    elif is_poll:
+        method, payload = "sendPoll", {**payload, **poll_data}
+    else:
+        method, payload = "sendMessage", {**payload, "text": text}
     
-    prompt = (
-        "אתה עיתונאי ספורט ואוהד שרוף של הפועל פתח תקווה. "
-        "משימה 1: בדוק האם הכתבה עוסקת בעיקרה (מעל 50%) בהפועל פתח תקווה. "
-        "אם הקבוצה מוזכרת רק כיריבה עתידית, או כחלק מרשימת תוצאות, או שהכתבה היא על קבוצה אחרת (כמו הפועל תל אביב) - החזר 'SKIP'. "
-        "משימה 2: אם הכתבה רלוונטית, כתוב תקציר של 3-4 משפטים בטון ענייני, כחול ומכובד. בלי 'לוזונים'.\n\n"
-        f"כותרת: {title}\nטקסט: {text[:3000]}"
-    )
+    r = requests.post(url + method, data=payload)
+    print(f"LOG: Sent {method}, Status: {r.status_code}")
+
+def run_full_simulation():
+    print("🚀 מתחיל סימולציה מלאה של יום משחק...")
     
-    try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
-        out = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        if "SKIP" in out.upper(): return "SKIP"
-        return out
-    except: return None
+    # הגדרת יריבה לטסט
+    opp_heb = "טסט"
 
-def is_duplicate_news(new_title, history_file="recent_titles.txt"):
-    """בדיקה חכמה למניעת כפילויות מאתרים שונים על אותו נושא"""
-    if not os.path.exists(history_file): open(history_file, 'w').close()
-    with open(history_file, 'r', encoding='utf-8') as f:
-        recent = f.read().splitlines()
-    
-    # בדיקה אם יש מילים משותפות משמעותיות בכותרת (למשל 'עומר פרץ' ו-'חוזה')
-    new_words = set(new_title.split())
-    for old_title in recent:
-        old_words = set(old_title.split())
-        common = new_words.intersection(old_words)
-        if len(common) >= 3: # אם יש 3 מילים זהות בכותרת, זה כנראה אותו נושא
-            return True
-            
-    # שמירה וניהול רשימה של 10 כותרות אחרונות
-    recent = [new_title] + recent[:9]
-    with open(history_file, 'w', encoding='utf-8') as f:
-        f.write("\n".join(recent))
-    return False
+    # --- 1. הודעת Matchday (כאילו בוקר) ---
+    print("נשלחת הודעת Matchday...")
+    msg_md = f"הפועל שלנו תעלה בעוד כמה שעות לכר הדשא לשחק נגד *{opp_heb}*.\n\nלתת הכל בשביל הסמל, כחול עולה עולה - יאללה הפועל מלחמה 💙"
+    send_telegram_test(msg_md, photo_url=FALLBACK_POSTER)
 
-def main():
-    now_il = get_israel_time()
-    print(f"--- {now_il.strftime('%H:%M:%S')} תחילת ריצה ---")
-    
-    db_file = "seen_links.txt"
-    if not os.path.exists(db_file): open(db_file, 'a').close()
-    with open(db_file, 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
+    # --- 2. הודעת הימורים (כאילו 15:00) ---
+    print("נשלחת הודעת הימורים...")
+    send_telegram_test("💰 *זמן הימורים!* מה תהיה התוצאה היום נגד טסט? כתבו בתגובות! 👇")
 
-    for feed_url in RSS_FEEDS:
-        print(f"📡 בודק פיד: {feed_url}")
-        try:
-            # Headers מתקדמים לעקיפת חסימות (במיוחד ספורט 5)
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'application/rss+xml, application/xml;q=0.9, */*;q=0.8',
-                'Referer': 'https://www.google.com/'
-            }
-            resp = requests.get(feed_url, headers=headers, timeout=20)
-            feed = feedparser.parse(resp.content)
-            
-            for entry in feed.entries[:30]:
-                link = entry.link.split('?')[0].replace("https://svcamz.", "https://www.")
-                if link in history: continue
-                
-                # חילוץ תוכן
-                try:
-                    art_resp = requests.get(entry.link, headers=headers, timeout=15)
-                    soup = BeautifulSoup(art_resp.content, 'html.parser')
-                    content = " ".join([p.get_text() for p in soup.find_all(['p', 'h2'])])
-                except: content = entry.title
+    # --- 3. הודעת סיום משחק - ניצחון (כאילו נגמר המשחק) ---
+    print("נשלחת הודעת ניצחון...")
+    win_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות במשחק נגד {opp_heb}\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
+    send_telegram_test(win_txt, with_table=True)
 
-                # בדיקת מילות מפתח
-                if any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
-                    
-                    # בדיקת כפילות נושא (מאתר אחר)
-                    if is_duplicate_news(entry.title):
-                        print(f"⏭️ כפילות נושא זוהתה: {entry.title}")
-                        with open(db_file, 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        continue
+    # --- 4. סקר MVP (כאילו עברו 10 דקות) ---
+    print("נשלח סקר MVP...")
+    poll = {"question": "מי המצטיין שלכם נגד טסט? ⚽️", "options": DEFAULT_PLAYERS[:10], "is_anonymous": False}
+    send_telegram_test("", is_poll=True, poll_data=poll)
 
-                    print(f"🎯 נמצאה כתבה רלוונטית פוטנציאלית: {entry.title}")
-                    summary = get_ai_summary(content, entry.title)
-                    
-                    if summary == "SKIP" or not summary:
-                        print("🚫 הכתבה לא עוסקת בעיקרה בהפועל פ\"ת. מדלג.")
-                        with open(db_file, 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        continue
-                    
-                    msg = f"*יש עדכון חדש על הפועל 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
-                    if send_telegram(msg):
-                        with open(db_file, 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        history.add(link)
-                        time.sleep(5)
-        except Exception as e:
-            print(f"⚠️ שגיאה בפיד {feed_url}: {e}")
-
-    print("--- סיום ריצה ---")
-
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    run_full_simulation()
