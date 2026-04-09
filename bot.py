@@ -17,7 +17,6 @@ RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 ADMIN_ID = "425605110"
 TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
-ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
 MATCHDAY_POSTERS = [
     "https://i.ibb.co/LhxyQDdW/2026-04-07-12-21-58.png",
@@ -33,8 +32,7 @@ HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "ה
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
     "Hapoel Beer Sheva": "הפועל באר שבע", "Beitar Jerusalem": "בית\"ר ירושלים",
-    "Maccabi Bnei Reineh": "מכבי בני ריינה", "Ironi Tiberias": "עירוני טבריה",
-    "Bnei Sakhnin": "בני סכנין", "M.S. Ashdod": "מ.ס. אשדוד", "Hapoel Tel Aviv": "הפועל תל אביב"
+    "Hapoel Tel Aviv": "הפועל תל אביב", "M.S. Ashdod": "מ.ס. אשדוד"
 }
 
 # --- פונקציות עזר ---
@@ -44,8 +42,8 @@ def get_israel_time():
 
 def get_ai_response(prompt):
     if not GEMINI_API_KEY: return None
-    # ניסיון למודל הכי יציב
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # שימוש ב-v1beta פותר את שגיאת ה-404 לפי הלוגים
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
         if res.status_code == 200:
@@ -74,47 +72,29 @@ def main():
     today_str = now_il.strftime('%Y-%m-%d')
     print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} (Israel) ---")
 
-    # ניהול קבצי זיכרון
-    for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt"]:
+    for f in ["seen_links.txt", "task_log.txt"]:
         if not os.path.exists(f): open(f, 'a').close()
     
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
 
-    # 1. היסטוריה (ימי רביעי) - בדיקת לוג
-    if now_il.weekday() == 2:
-        print(f"DEBUG [HISTORY]: היום יום רביעי. משימות שכבר בוצעו: {tasks}")
-        if now_il.hour >= 10 and f"history_{today_str}" not in tasks:
-            print("DEBUG [HISTORY]: שולח בקשה ל-AI לפינת ההיסטוריה...")
-            fact = get_ai_response("כתוב 2 עובדות היסטוריות קצרות ומרגשות על הפועל פתח תקווה. הוסף אימוג'ים והתחל ב'הידעת?'.")
-            if fact:
-                if send_telegram(fact, payload={"chat_id": ADMIN_ID, "text": f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}", "parse_mode": "Markdown"}):
-                    with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
-    else:
-        print(f"DEBUG [HISTORY]: היום לא יום רביעי (היום יום {now_il.weekday()})")
-
-    # 2. ניהול יום משחק
-    print("DEBUG [API]: בודק משחקים קרובים...")
+    # 1. יום משחק
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
         if r_next.get('events'):
             next_ev = r_next['events'][0]
             ev_date = (datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
-            print(f"DEBUG [API]: נמצא משחק בתאריך {ev_date}")
             if ev_date == today_str:
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
                 if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
-                    print("DEBUG [MATCH]: שולח פוסטר יום משחק...")
                     md_text = f"*Match-Day*\nהפועל שלנו נגד *{opp_heb}*.\nיאללה מלחמה 💙"
                     if send_telegram(md_text, method="sendPhoto", payload={"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": md_text, "parse_mode": "Markdown"}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
-    except Exception as e:
-        print(f"DEBUG [API ERROR]: {e}")
+    except: pass
 
-    # 3. סריקת כתבות
-    print("DEBUG [RSS]: מתחיל סריקת פידים...")
+    # 2. סריקת כתבות
     feeds = [
         "https://www.hapoelpt.com/blog-feed.xml",
         "https://www.one.co.il/cat/rss/",
@@ -123,38 +103,32 @@ def main():
     ]
     
     for url in feeds:
-        print(f"DEBUG [RSS]: סורק את {url}")
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:10]:
+            # סורקים 30 כתבות כדי לא לפספס כלום
+            for e in f.entries[:30]:
                 link = e.link.split('?')[0]
-                print(f"DEBUG [CHECK]: בודק כתבה: {e.title[:40]}... ({link})")
+                if link in history: continue
                 
-                if link in history:
-                    print(f"DEBUG [SKIP]: הלינק כבר קיים בהיסטוריה.")
-                    continue
-                
-                # שאיבת תוכן לזיהוי מילות מפתח
                 try:
                     soup = BeautifulSoup(requests.get(link, timeout=10).content, 'html.parser')
-                    content = e.title + " " + " ".join([p.get_text() for p in soup.find_all('p')])
-                except:
-                    content = e.title
+                    content = e.title + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
+                except: content = e.title
 
                 if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                    print(f"DEBUG [MATCH]: נמצאה מילת מפתח! שולח ל-AI לסיכום...")
-                    prompt = f"כתוב תקציר של 3 משפטים לאוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם ישירות (למשל רק אזכור קטן), החזר רק את המילה SKIP.\n\nכתבה: {content[:2000]}"
+                    print(f"DEBUG [MATCH]: מילת מפתח נמצאה בלינק: {link}")
+                    prompt = (
+                        "אתה כתב ספורט שאוהד את הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים ענייניים. "
+                        "התמקד במידע שרלוונטי להפועל פתח תקווה. אם הכתבה עוסקת בעיקר בקבוצה אחרת, החזר רק 'SKIP'.\n\n"
+                        f"כתבה: {content[:3000]}"
+                    )
                     summary = get_ai_response(prompt)
-                    
-                    print(f"DEBUG [AI RESPONSE]: {summary}")
                     
                     if summary and "SKIP" not in summary.upper():
                         msg = f"*עדכון כחול 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                         if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                             with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
                             time.sleep(5)
-                else:
-                    print(f"DEBUG [IGNORE]: לא נמצאה מילת מפתח בכתבה.")
         except Exception as e:
             print(f"DEBUG [RSS ERROR]: {e} בפיד {url}")
 
