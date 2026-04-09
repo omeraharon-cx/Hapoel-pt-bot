@@ -17,7 +17,6 @@ RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 ADMIN_ID = "425605110"
 TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
-ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
 # מילות המפתח המקוריות
 HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
@@ -34,7 +33,7 @@ MATCHDAY_POSTERS = [
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
     "Hapoel Beer Sheva": "הפועל באר שבע", "Beitar Jerusalem": "בית\"ר ירושלים",
-    "Hapoel Tel Aviv": "הפועל תל אביב", "M.S. Ashdod": "מ.ס. אשדוד"
+    "Hapoel Tel Aviv": "הפועל תל אביב", "M.S. Ashdod": "מ.ס. אשדוד", "Bnei Sakhnin": "בני סכנין"
 }
 
 # --- פונקציות עזר ---
@@ -43,25 +42,31 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """פונקציה חסינה עם המתנה ארוכה לעומס (429)"""
+    """שימוש במודל 2.0 בלבד עם מנגנון הגנה מעומס"""
     if not GEMINI_API_KEY: return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    for attempt in range(4):
+    # שימוש במודל gemini-2.0-flash בלבד - כי ראינו בלוג שהוא היחיד שעובד (נתן 429 ולא 404)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    for attempt in range(3):
         try:
             res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+            
             if res.status_code == 200:
                 return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            
             elif res.status_code == 429:
-                wait = 60 * (attempt + 1)
-                print(f"DEBUG [AI]: עומס (429). מחכה {wait} שניות לניקוי מכסה...")
+                wait = 40 * (attempt + 1)
+                print(f"DEBUG [AI]: עומס (429). מחכה {wait} שניות...")
                 time.sleep(wait)
+            
             else:
-                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. מדלג.")
+                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. הודעה: {res.text[:100]}")
                 return None
-        except:
+        except Exception as e:
+            print(f"DEBUG [AI EXCEPTION]: {e}")
             time.sleep(5)
-            continue
+            
     return None
 
 def send_telegram(text, method="sendMessage", payload=None):
@@ -86,7 +91,7 @@ def main():
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
     with open("recent_summaries.txt", 'r', encoding='utf-8') as f: recent_sums = f.read()
 
-    # 1. יום משחק
+    # 1. יום משחק (פוסטר)
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
@@ -110,7 +115,8 @@ def main():
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:25]: all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:40]: # סריקה עמוקה כדי למצוא את וואלה
+                all_articles.append({'title': e.title, 'link': e.link})
         except: continue
 
     for art in all_articles:
@@ -118,18 +124,22 @@ def main():
         if link in history: continue
         
         try:
-            # הוספת Headers כדי שלא יחסמו אותנו
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-            soup = BeautifulSoup(requests.get(link, headers=headers, timeout=10).content, 'html.parser')
+            resp = requests.get(link, headers=headers, timeout=10)
+            soup = BeautifulSoup(resp.content, 'html.parser')
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
+                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר מ-Gemini 2.0...")
                 
-                # מניעת עומס: מחכים 20 שניות לפני כל פנייה ל-AI
-                time.sleep(20)
+                # המתנה חובה של 25 שניות לפני כל פנייה ל-AI כדי למנוע עומס (429)
+                time.sleep(25)
                 
-                prompt = f"סכם ב-3 משפטים עבור אוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם ישירות, החזר SKIP.\n\nכתבה: {content[:2800]}"
+                prompt = (
+                    "אתה כתב ספורט אוהד הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים. "
+                    "אם הכתבה לא עוסקת בהפועל פתח תקווה באופן מהותי, החזר SKIP.\n\n"
+                    f"כתבה: {content[:3000]}"
+                )
                 summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
@@ -137,7 +147,7 @@ def main():
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
                         with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "\n")
-                        # הפסקה קטנה נוספת אחרי הצלחה
+                        # הפסקה קטנה נוספת
                         time.sleep(10)
         except: continue
 
