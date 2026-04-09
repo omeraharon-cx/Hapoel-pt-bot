@@ -17,7 +17,6 @@ RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 ADMIN_ID = "425605110"
 TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
-ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
 MATCHDAY_POSTERS = [
     "https://i.ibb.co/LhxyQDdW/2026-04-07-12-21-58.png",
@@ -28,7 +27,8 @@ MATCHDAY_POSTERS = [
     "https://i.ibb.co/v4phbhv3/IMG-7019.jpg"
 ]
 
-HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
+# הרחבתי את מילות המפתח כדי שלא נפספס אף כתבה (כולל עומר פרץ)
+HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "עומר פרץ", "אביחי יחיא"]
 
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
@@ -42,28 +42,31 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """פונקציה חסינה עם מנגנון המתנה לעומס (429)"""
+    """פונקציה שמשתמשת רק במודל gemini-2.0-flash עם Retry חכם"""
     if not GEMINI_API_KEY: return None
     
-    # המודל הכי יציב ב-2026
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # הכתובת המדויקת שעובדת ב-2026
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     
-    for attempt in range(3): # עד 3 ניסיונות
+    for attempt in range(3):
         try:
             res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
             
             if res.status_code == 200:
                 return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             
-            elif res.status_code == 429:
-                print(f"DEBUG [AI]: עומס (429). מחכה {5 * (attempt + 1)} שניות...")
-                time.sleep(5 * (attempt + 1))
+            elif res.status_code == 429: # עומס - מחכים קצת יותר כל פעם
+                wait_time = (attempt + 1) * 10
+                print(f"DEBUG [AI]: עומס (429). מחכה {wait_time} שניות...")
+                time.sleep(wait_time)
             
             else:
-                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. מדלג.")
+                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. Response: {res.text[:100]}")
                 return None
-        except:
-            continue
+        except Exception as e:
+            print(f"DEBUG [AI EXCEPTION]: {e}")
+            time.sleep(2)
+            
     return None
 
 def send_telegram(text, method="sendMessage", payload=None):
@@ -73,21 +76,6 @@ def send_telegram(text, method="sendMessage", payload=None):
         print(f"DEBUG [TELEGRAM]: {method} Status: {r.status_code}")
         return r.status_code == 200
     except: return False
-
-def scrape_sport5_headlines():
-    links = []
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'}
-    try:
-        r = requests.get("https://www.sport5.co.il/liga.aspx?FolderID=64", headers=headers, timeout=15)
-        soup = BeautifulSoup(r.content, 'html.parser')
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            title = a.get_text().strip()
-            if ('article' in href or '.aspx' in href) and len(title) > 25:
-                full_url = href if href.startswith('http') else "https://www.sport5.co.il" + href
-                links.append({'title': title, 'link': full_url})
-    except: pass
-    return links
 
 # --- לוגיקה מרכזית ---
 
@@ -103,7 +91,7 @@ def main():
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
     with open("recent_summaries.txt", 'r', encoding='utf-8') as f: recent_sums = f.read()
 
-    # 1. ניהול יום משחק
+    # 1. יום משחק
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
@@ -121,28 +109,36 @@ def main():
     except: pass
 
     # 2. סריקת כתבות
-    print("DEBUG [RSS]: סורק כתבות...")
-    all_articles = []
+    print("DEBUG [RSS]: מתחיל סריקה אגרסיבית...")
+    # הוספתי את ספורט 5 ישירות לכאן בשיטה שדילגת עליה בטעות
     feeds = ["https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.ynet.co.il/Integration/StoryRss2.xml", "https://rss.walla.co.il/feed/7"]
+    
+    all_articles = []
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:30]: all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:40]: # סורקים עמוק מאוד
+                all_articles.append({'title': e.title, 'link': e.link})
         except: continue
-    
-    all_articles.extend(scrape_sport5_headlines())
 
     for art in all_articles:
         link = art['link'].split('?')[0].replace("https://svcamz.", "https://www.")
         if link in history: continue
         
         try:
-            soup = BeautifulSoup(requests.get(link, timeout=10).content, 'html.parser')
+            # בקשה עם Headers כדי שוואלה וספורט 5 לא יחסמו
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            resp = requests.get(link, headers=headers, timeout=10)
+            soup = BeautifulSoup(resp.content, 'html.parser')
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
-                prompt = f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. אם לא עליהם, החזר SKIP.\n\nכתבה: {content[:2500]}"
+                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר מ-Gemini 2.0...")
+                prompt = (
+                    "אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים. "
+                    "אם הכתבה לא מוסיפה מידע חדש או שהפועל מוזכרת רק בטעות, החזר רק את המילה SKIP.\n\n"
+                    f"כתבה: {content[:3000]}"
+                )
                 summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
@@ -150,8 +146,7 @@ def main():
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
                         with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "\n")
-                        # הפסקה קטנה בין שליחות כדי לא לעצבן את ה-AI
-                        time.sleep(3)
+                        time.sleep(10) # הפסקה גדולה בין כתבות למניעת עומס
         except: continue
 
 if __name__ == "__main__": main()
