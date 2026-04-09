@@ -29,22 +29,23 @@ MATCHDAY_POSTERS = [
     "https://i.ibb.co/v4phbhv3/IMG-7019.jpg"
 ]
 
-TEAM_TRANSLATION = {"Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", "Hapoel Beer Sheva": "הפועל באר שבע", "Beitar Jerusalem": "בית\"ר ירושלים", "Hapoel Tel Aviv": "הפועל תל אביב"}
-
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
+    """קריאה למודל 1.5 פלאש עם עצירה מיידית בשגיאה"""
     if not GEMINI_API_KEY: return None
-    # שימוש במודל 2.0 פלאש כפי שעבד (חזר 429 ולא 404)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        print(f"DEBUG [AI]: Status {res.status_code}. Response: {res.text[:150]}")
-    except: pass
-    return None
+        
+        # אם יש שגיאת מכסה (429) או כל שגיאה אחרת - אנחנו עוצרים הכל
+        print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. עוצר ריצה כדי למנוע חסימה.")
+        return "STOP_ALL"
+    except:
+        return "STOP_ALL"
 
 def send_telegram(text, method="sendMessage", payload=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
@@ -63,27 +64,25 @@ def main():
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
 
-    # 1. יום משחק
-    headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
-    try:
-        r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
-        if r_next.get('events'):
-            next_ev = r_next['events'][0]
-            if (datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d') == today_str:
-                if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
-                    md_text = f"*Match-Day*\nיאללה מלחמה 💙"
-                    if send_telegram(md_text, method="sendPhoto", payload={"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": md_text, "parse_mode": "Markdown"}):
-                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
-    except: pass
+    # 1. יום משחק (שליחת פוסטר פשוטה)
+    if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
+        # בדיקה קצרה ב-API
+        headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
+        try:
+            r = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=10).json()
+            if r.get('events') and (datetime.fromtimestamp(r['events'][0]['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d') == today_str:
+                if send_telegram("Match Day! 💙", method="sendPhoto", payload={"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": "Match Day! יאללה מלחמה 💙", "parse_mode": "Markdown"}):
+                    with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
+        except: pass
 
-    # 2. סריקת כתבות - מעבדים רק כתבה אחת חדשה בכל ריצה כדי לשמור על המכסה
+    # 2. סריקת כתבות
     feeds = ["https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.ynet.co.il/Integration/StoryRss2.xml", "https://rss.walla.co.il/feed/7"]
     
     all_articles = []
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:20]: all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:15]: all_articles.append({'title': e.title, 'link': e.link})
         except: continue
 
     for art in all_articles:
@@ -97,14 +96,18 @@ def main():
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
                 print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
-                summary = get_ai_response(f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. אם לא עליהם, החזר SKIP.\n\nכתבה: {content[:2500]}")
+                summary = get_ai_response(f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. כתבה: {content[:2000]}")
                 
+                if summary == "STOP_ALL":
+                    print("LOG: נעצר עקב שגיאת מכסה בגוגל.")
+                    return # מפסיק את כל הריצה
+
                 if summary and "SKIP" not in summary.upper():
                     msg = f"*עדכון כחול 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        print("LOG: כתבה נשלחה בהצלחה. עוצר ריצה כדי לשמור על מכסה.")
-                        return # עוצר כאן - רק כתבה אחת בכל פעם
+                        print("LOG: כתבה נשלחה. עוצר ריצה.")
+                        return # שולח רק אחת בכל ריצה כדי לשמור על המכסה
         except: continue
 
 if __name__ == "__main__": main()
