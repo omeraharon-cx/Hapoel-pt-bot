@@ -47,6 +47,7 @@ TEAM_TRANSLATION = {
 }
 
 RSS_FEEDS = [
+    "https://news.google.com/rss/search?q=הפועל+פתח+תקווה&hl=he&gl=IL&ceid=IL:he"
     "https://rss.walla.co.il/feed/7",
     "https://www.hapoelpt.com/blog-feed.xml",
     "https://www.one.co.il/cat/rss/",
