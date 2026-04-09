@@ -46,7 +46,20 @@ TEAM_TRANSLATION = {
     "Ironi Kiryat Shmona": "עירוני קרית שמונה", "Maccabi Petah Tikva": "מכבי פתח תקווה"
 }
 
-RSS_FEEDS = ["https://rss.walla.co.il/feed/7", "https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64", "https://www.ynet.co.il/Integration/StoryRss2.xml"]
+RSS_FEEDS = [
+    "https://rss.walla.co.il/feed/7",
+    "https://www.hapoelpt.com/blog-feed.xml",
+    "https://www.one.co.il/cat/rss/",
+    "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64",
+    "https://www.ynet.co.il/Integration/StoryRss2.xml"
+]
+
+# ✅ תיקון 1: כותרות שמתחזות לדפדפן - בלעדיהן sport5 חוסם את הבקשה
+RSS_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+    'Accept-Language': 'he-IL,he;q=0.9,en;q=0.8',
+}
 
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
@@ -70,6 +83,20 @@ def get_ai_response(prompt):
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
     except: return None
+
+# ✅ תיקון 2: פונקציה שמתאימה את החילוץ למבנה HTML של כל אתר
+def extract_article_content(soup, url):
+    if "sport5.co.il" in url:
+        container = (
+            soup.find('div', class_='article-body') or
+            soup.find('div', class_='articleBody') or
+            soup.find('article') or
+            soup.find('div', attrs={'itemprop': 'articleBody'})
+        )
+        if container:
+            return " ".join([el.get_text() for el in container.find_all(['p', 'h1', 'h2', 'h3', 'span'])])
+        print("DEBUG [SPORT5]: לא נמצא container, חוזר לחיפוש כללי")
+    return " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
 
 def main():
     now_il = get_israel_time()
@@ -102,19 +129,24 @@ def main():
     for feed_url in RSS_FEEDS:
         if processed_count >= 3: break
         try:
-            feed = feedparser.parse(requests.get(feed_url, timeout=20).content)
+            # ✅ תיקון 1 בפעולה: RSS_HEADERS בכל בקשת פיד
+            resp = requests.get(feed_url, headers=RSS_HEADERS, timeout=20)
+            feed = feedparser.parse(resp.content)
+            print(f"DEBUG [RSS]: {feed_url.split('/')[2]} — {len(feed.entries)} כתבות")
+
             for entry in feed.entries[:30]:
                 if processed_count >= 3: break
                 link = entry.link.split('?')[0].replace("https://svcamz.", "https://www.")
                 if link in history: continue
                 
                 try:
-                    soup = BeautifulSoup(requests.get(entry.link, timeout=15).content, 'html.parser')
-                    content = " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
-                except: content = entry.title
+                    soup = BeautifulSoup(requests.get(entry.link, headers=RSS_HEADERS, timeout=15).content, 'html.parser')
+                    # ✅ תיקון 2 בפעולה: חילוץ חכם בהתאם לאתר
+                    content = extract_article_content(soup, entry.link)
+                except:
+                    content = entry.title
 
                 if any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
-                    # פילטר AI מדויק ללא מילות פתיחה מיותרות
                     summary_prompt = (
                         "אתה עורך חדשות של הפועל פתח תקווה. "
                         "משימה: בדוק האם הכתבה עוסקת בעיקרה (מעל 50%) בהפועל פתח תקווה או במידע קריטי עבורה. "
@@ -127,7 +159,6 @@ def main():
                     summary = get_ai_response(summary_prompt)
                     
                     if summary and "SKIP" not in summary.upper():
-                        # מניעת כפילות נושא
                         dup_p = f"האם הנושא כבר דווח? קודמים: {recent_sums[-600:]}\nחדש: {entry.title}"
                         if "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
@@ -136,6 +167,10 @@ def main():
                                 with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "|||")
                                 processed_count += 1
                                 time.sleep(10)
-        except: continue
+        except Exception as e:
+            print(f"DEBUG [RSS ERROR]: {feed_url.split('/')[2]} — {e}")
+            continue
+
+    print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---")
 
 if __name__ == "__main__": main()
