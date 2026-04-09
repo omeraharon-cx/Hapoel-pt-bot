@@ -33,27 +33,35 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """קריאה נקייה ל-AI. אם נכשל - מחזיר None ושולח ללוג את הסיבה."""
-    if not GEMINI_API_KEY: 
-        print("LOG ERROR: Missing Gemini API Key")
-        return None
+    """
+    פתרון שורש: ניסוי של שילובים רשמיים עד לקבלת 200 OK.
+    זה יוודא שאנחנו לא נופלים על 404 של גרסה.
+    """
+    if not GEMINI_API_KEY: return None
     
-    # חזרה להגדרות ה-URL המקוריות והיציבות
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # רשימת השילובים הנפוצים ביותר (גרסה + מודל)
+    attempts = [
+        ("v1beta", "gemini-1.5-flash"),
+        ("v1", "gemini-1.5-flash"),
+        ("v1beta", "gemini-1.5-flash-latest")
+    ]
     
-    try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        if res.status_code == 200:
-            data = res.json()
-            if 'candidates' in data:
-                return data['candidates'][0]['content']['parts'][0]['text'].strip()
-        
-        # דיווח שגיאה ללוגים לצורך פתרון אמיתי
-        print(f"LOG ERROR AI: Status {res.status_code}. Response: {res.text}")
-        return None
-    except Exception as e:
-        print(f"LOG ERROR AI EXCEPTION: {e}")
-        return None
+    for version, model in attempts:
+        url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        try:
+            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+            if res.status_code == 200:
+                print(f"LOG: AI Success with {version}/{model}")
+                return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            elif res.status_code == 429:
+                print(f"LOG: AI Rate Limit (429) on {version}/{model}. נסה להמתין.")
+                return "RATE_LIMIT"
+            else:
+                print(f"LOG: AI Failed {version}/{model} with status {res.status_code}")
+        except Exception as e:
+            print(f"LOG: AI Exception on {version}/{model}: {e}")
+            
+    return None
 
 def send_telegram(text, method="sendMessage", payload=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
@@ -65,25 +73,15 @@ def send_telegram(text, method="sendMessage", payload=None):
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
-    print(f"--- תחילת ריצה נקייה: {now_il.strftime('%H:%M:%S')} ---")
+    print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} ---")
 
+    # קבצי היסטוריה
     for f in ["seen_links.txt", "task_log.txt"]:
         if not os.path.exists(f): open(f, 'a').close()
-    
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
 
-    # 1. ניהול יום משחק (מנגנון מקורי)
-    if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
-        headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
-        try:
-            r = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=10).json()
-            if r.get('events') and (datetime.fromtimestamp(r['events'][0]['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d') == today_str:
-                if send_telegram("Match Day! 💙", method="sendPhoto", payload={"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": "Match Day! יאללה מלחמה 💙", "parse_mode": "Markdown"}):
-                    with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
-        except: pass
-
-    # 2. סריקת כתבות
+    # סריקת פידים (ONE, ספורט 5 דרך RSS, וואלה)
     feeds = ["https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.ynet.co.il/Integration/StoryRss2.xml", "https://rss.walla.co.il/feed/7"]
     
     all_articles = []
@@ -93,6 +91,7 @@ def main():
             for e in f.entries[:20]: all_articles.append({'title': e.title, 'link': e.link})
         except: continue
 
+    # עיבוד כתבות
     for art in all_articles:
         link = art['link'].split('?')[0].replace("https://svcamz.", "https://www.")
         if link in history: continue
@@ -104,18 +103,22 @@ def main():
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
+                print(f"DEBUG [MATCH]: נמצאה כתבה רלוונטית: {link}")
                 
-                # אנחנו לא שולחים בלי תקציר. ה-AI חייב לענות.
                 summary = get_ai_response(f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. כתבה: {content[:2500]}")
                 
+                if summary == "RATE_LIMIT":
+                    print("LOG: חריגה מהמכסה החינמית. עוצר ריצה.")
+                    return
+
                 if summary and "SKIP" not in summary.upper():
                     msg = f"*עדכון כחול 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        print(f"LOG SUCCESS: Article sent - {link}")
-                        time.sleep(5) # הפסקה קצרה בין שליחות
-        except:
+                        print("LOG: הצלחה! כתבה נשלחה.")
+                        return # שולח רק אחת כדי לבדוק שהכל תקין
+        except Exception as e:
+            print(f"LOG: Error processing {link}: {e}")
             continue
 
 if __name__ == "__main__": main()
