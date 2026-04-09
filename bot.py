@@ -41,10 +41,9 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """פונקציה חסינה עם המתנה ארוכה מאוד למניעת 429"""
+    """שימוש במודל 2.0 בלבד - היחיד שלא נותן 404 בלוגים שלך"""
     if not GEMINI_API_KEY: return None
-    # שימוש במודל 1.5 פלאש היציב ביותר ל-2026
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     
     for attempt in range(3):
         try:
@@ -52,14 +51,15 @@ def get_ai_response(prompt):
             if res.status_code == 200:
                 return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             elif res.status_code == 429:
+                # עומס - מחכים דקה ומנסים שוב
                 wait = 60 * (attempt + 1)
                 print(f"DEBUG [AI]: עומס במכסה (429). מחכה {wait} שניות...")
                 time.sleep(wait)
             else:
-                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. הודעה: {res.text[:100]}")
+                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. הודעה: {res.text[:150]}")
                 return None
         except:
-            time.sleep(10)
+            time.sleep(5)
             continue
     return None
 
@@ -67,7 +67,7 @@ def send_telegram(text, method="sendMessage", payload=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
     try:
         r = requests.post(url, json=payload, timeout=25)
-        print(f"DEBUG [TELEGRAM]: {method} Status: {r.status_code}")
+        print(f"DEBUG [TELEGRAM]: Status: {r.status_code}")
         return r.status_code == 200
     except: return False
 
@@ -101,21 +101,19 @@ def main():
     except: pass
 
     # 2. סריקת כתבות
-    print("DEBUG [RSS]: סורק כתבות...")
     feeds = ["https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.ynet.co.il/Integration/StoryRss2.xml", "https://rss.walla.co.il/feed/7"]
     
     all_articles = []
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:25]: all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:30]: all_articles.append({'title': e.title, 'link': e.link})
         except: continue
 
-    # מגביל ל-2 כתבות חדשות בלבד בכל ריצה כדי לא לחרוג מהמכסה
-    processed_count = 0
-    
+    # הגבלה ל-2 כתבות חדשות בריצה כדי לא לחנוק את ה-API
+    processed = 0
     for art in all_articles:
-        if processed_count >= 2: break
+        if processed >= 2: break
         
         link = art['link'].split('?')[0].replace("https://svcamz.", "https://www.")
         if link in history: continue
@@ -128,18 +126,18 @@ def main():
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
                 print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
                 
-                # מניעת עומס: מחכים חצי דקה לפני כל פנייה ל-AI
+                # מניעת עומס (429): מחכים 30 שניות בין פניות ל-AI
                 time.sleep(30)
                 
-                prompt = f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. אם לא עליהם ישירות, החזר SKIP.\n\nכתבה: {content[:2500]}"
+                prompt = f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם ישירות, החזר SKIP.\n\nכתבה: {content[:2500]}"
                 summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
                     msg = f"*עדכון כחול 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        processed_count += 1
-                        time.sleep(15)
+                        processed += 1
+                        time.sleep(10)
         except: continue
 
 if __name__ == "__main__": main()
