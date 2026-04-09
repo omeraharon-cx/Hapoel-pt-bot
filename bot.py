@@ -5,11 +5,10 @@ import os
 import time
 import sys
 import random
-import html
-import json
+import google.generativeai as genai  # הספריה הרשמית של גוגל
 from datetime import datetime, timedelta
 
-# הדפסה מיידית ללוגים
+# הגדרה להדפסה מיידית ללוגים של GitHub Actions
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות ליבה (Secrets) ---
@@ -20,6 +19,11 @@ ADMIN_ID = "425605110"
 TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
+
+# --- הגדרת ה-AI של גוגל (מונע 404) ---
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- מאגר פוסטרים ליום משחק ---
 MATCHDAY_POSTERS = [
@@ -48,6 +52,13 @@ WIN_CHANTS = [
     "מי שלא קופץ לוזון, מי שלא קופץ לוזון! 💙"
 ]
 
+PLAYER_MAP = {
+    "Omer Katz": "עומר כץ", "Orel Dgani": "אוראל דגני", "Nadav Niddam": "נדב נידם", 
+    "Yonatan Cohen": "יונתן כהן", "Roee David": "רועי דוד", "Itay Rotman": "איתי רוטמן",
+    "Mark Costa": "קוסטה", "Shavit Mazal": "שביט מזל", "Andrade Euclides Claye": "קליי",
+    "Chipuoka Songa": "סונגה", "Tomer Altman": "אלטמן"
+}
+
 DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד", "קוסטה", "שביט מזל", "קליי", "סונגה", "אלטמן"]
 
 RSS_FEEDS = [
@@ -69,38 +80,38 @@ def send_telegram(text, method="sendMessage", payload=None):
         r = requests.post(url, json=payload, timeout=25)
         print(f"LOG [TELEGRAM]: {method} Status: {r.status_code}")
         return r.status_code == 200
-    except: return False
+    except Exception as e:
+        print(f"LOG ERROR [TELEGRAM]: {e}")
+        return False
 
 def get_ai_response(prompt):
+    """שימוש בספריה הרשמית של גוגל למניעת שגיאות URL ו-404"""
     if not GEMINI_API_KEY: return None
-    # שימוש בנתיב v1 ובמודל הבסיסי ביותר - הכי פחות סיכוי ל-404
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        data = res.json()
-        if 'candidates' in data:
-            return data['candidates'][0]['content']['parts'][0]['text'].strip()
-        print(f"LOG ERROR [AI]: {data}")
+        print(f"LOG [AI]: מנסה לייצר תוכן עם ה-SDK הרשמי...")
+        response = model.generate_content(prompt)
+        if response and response.text:
+            return response.text.strip()
         return None
     except Exception as e:
         print(f"LOG ERROR [AI]: {e}")
         return None
 
 def scrape_sport5():
-    """סריקה ישירה של דף הבית של ספורט 5"""
+    """סריקה ישירה של דף הבית של ספורט 5 למקרה שה-RSS חסום"""
     links = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         r = requests.get("https://www.sport5.co.il/liga.aspx?FolderID=64", headers=headers, timeout=15)
         soup = BeautifulSoup(r.content, 'html.parser')
-        # מחפש את כל הלינקים שמובילים לכתבות
         for a in soup.find_all('a', href=True):
             url = a['href']
             title = a.get_text().strip()
             if ('articles.aspx' in url or '/articles/' in url) and len(title) > 20:
                 if not url.startswith('http'): url = "https://www.sport5.co.il" + url
                 links.append({'title': title, 'link': url})
-    except: pass
+    except Exception as e:
+        print(f"LOG ERROR [SPORT5]: {e}")
     return links
 
 # --- לוגיקה מרכזית ---
@@ -110,7 +121,6 @@ def main():
     today_str = now_il.strftime('%Y-%m-%d')
     print(f"--- תחילת ריצה: {now_il.strftime('%Y-%m-%d %H:%M:%S')} (Israel) ---")
 
-    # יצירת קבצים אם חסרים
     for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt"]:
         if not os.path.exists(f): open(f, 'a').close()
     
@@ -126,22 +136,27 @@ def main():
             if send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}", payload={"chat_id": ADMIN_ID, "text": f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}", "parse_mode": "Markdown"}):
                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
-    # 2. ניהול יום משחק
+    # 2. ניהול יום משחק (API)
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
         if r_next.get('events'):
             next_ev = r_next['events'][0]
             ev_date = (datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
-            
             if ev_date == today_str:
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
 
                 # Match-Day (12:00)
                 if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
-                    md_text = f"*Match-Day*\nהפועל שלנו תעלה בעוד כמה שעות לכר הדשא נגד *{opp_heb}*.\nמקווים לצאת עם נצחון חשוב.\n\nקדימה הפועל לתת את הלב בשביל הסמל - יאללה מלחמה 💙"
-                    photo_payload = {"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": md_text, "parse_mode": "Markdown"}
+                    md_text = (
+                        f"*Match-Day*\n"
+                        f"הפועל שלנו תעלה בעוד כמה שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
+                        f"מקווים לצאת עם נצחון חשוב.\n\n"
+                        f"קדימה הפועל לתת את הלב בשביל הסמל - יאללה מלחמה 💙"
+                    )
+                    selected_poster = random.choice(MATCHDAY_POSTERS)
+                    photo_payload = {"chat_id": ADMIN_ID, "photo": selected_poster, "caption": md_text, "parse_mode": "Markdown"}
                     if send_telegram(md_text, method="sendPhoto", payload=photo_payload):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
                 
@@ -153,14 +168,11 @@ def main():
 
     # 3. סריקת כתבות
     all_articles = []
-    # RSS רגיל
     for feed_url in RSS_FEEDS:
         try:
             feed = feedparser.parse(requests.get(feed_url, timeout=15).content)
             for entry in feed.entries[:15]: all_articles.append({'title': entry.title, 'link': entry.link})
         except: continue
-    
-    # סריקה ישירה של ספורט 5
     all_articles.extend(scrape_sport5())
 
     for art in all_articles:
@@ -173,17 +185,22 @@ def main():
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all('p')])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                prompt = f"כתוב תקציר של 3 משפטים לאוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם ישירות, החזר 'SKIP'.\n\nכתבה: {content[:2500]}"
+                prompt = (
+                    "האם הכתבה הבאה כוללת עדכון כלשהו על הפועל פתח תקווה? "
+                    "אם כן, כתוב תקציר של 3 משפטים בטון ענייני ומכובד. "
+                    "אם אין מידע מהותי עליהם, החזר 'SKIP'.\n\n"
+                    f"כתבה: {content[:2500]}"
+                )
                 summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
-                    # בדיקת כפילויות חכמה
+                    # מניעת כפילויות חכמה
                     dup_prompt = f"האם התקציר הבא עוסק באותו נושא בדיוק כמו אחד מהבאים? ענה 'YES' או 'NO'.\n\nקודמים: {recent_sums[-1500:]}\n\nחדש: {summary}"
                     if "YES" not in (get_ai_response(dup_prompt) or "NO").upper():
                         msg = f"*עדכון כחול 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                         if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                             with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
-                            with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "\n")
+                            with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "\n---\n")
                             time.sleep(5)
         except: continue
 
