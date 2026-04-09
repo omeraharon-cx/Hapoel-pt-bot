@@ -17,6 +17,7 @@ RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 ADMIN_ID = "425605110"
 TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
+ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
 MATCHDAY_POSTERS = [
     "https://i.ibb.co/LhxyQDdW/2026-04-07-12-21-58.png",
@@ -41,25 +42,28 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """מנגנון פלייאוף: מנסה את המודלים של 2026 אחד אחד עד שאחד מבקיע"""
+    """פונקציה חסינה עם מנגנון המתנה לעומס (429)"""
     if not GEMINI_API_KEY: return None
     
-    # רשימת המודלים המעודכנת ל-2026
-    models_to_try = ["gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-latest"]
+    # המודל הכי יציב ב-2026
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    for model_id in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1/models/{model_id}:generateContent?key={GEMINI_API_KEY}"
+    for attempt in range(3): # עד 3 ניסיונות
         try:
-            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=15)
+            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
+            
             if res.status_code == 200:
-                print(f"DEBUG [AI SUCCESS]: עבד עם מודל {model_id}!")
                 return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            
+            elif res.status_code == 429:
+                print(f"DEBUG [AI]: עומס (429). מחכה {5 * (attempt + 1)} שניות...")
+                time.sleep(5 * (attempt + 1))
+            
             else:
-                print(f"DEBUG [AI TRY]: מודל {model_id} החזיר {res.status_code}")
+                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. מדלג.")
+                return None
         except:
             continue
-    
-    print("DEBUG [AI FATAL]: שום מודל לא ענה. בדוק את ה-API Key ב-Google AI Studio.")
     return None
 
 def send_telegram(text, method="sendMessage", payload=None):
@@ -71,7 +75,6 @@ def send_telegram(text, method="sendMessage", payload=None):
     except: return False
 
 def scrape_sport5_headlines():
-    """סורק אגרסיבי לספורט 5 - מוציא לינקים ישירות מה-HTML"""
     links = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'}
     try:
@@ -100,7 +103,7 @@ def main():
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
     with open("recent_summaries.txt", 'r', encoding='utf-8') as f: recent_sums = f.read()
 
-    # 1. יום משחק (פוסטר ב-12:00, הימורים ב-15:00)
+    # 1. ניהול יום משחק
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
@@ -115,20 +118,16 @@ def main():
                     md_text = f"*Match-Day*\nהפועל שלנו נגד *{opp_heb}*.\nיאללה מלחמה 💙"
                     if send_telegram(md_text, method="sendPhoto", payload={"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": md_text, "parse_mode": "Markdown"}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
-                
-                if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
-                    if send_telegram("", method="sendPoll", payload={"chat_id": ADMIN_ID, "question": f"הימורים נגד {opp_heb}?", "options": ["ניצחון 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
-                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
     except: pass
 
     # 2. סריקת כתבות
-    print("DEBUG [RSS]: סורק כתבות חדשות...")
+    print("DEBUG [RSS]: סורק כתבות...")
     all_articles = []
     feeds = ["https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.ynet.co.il/Integration/StoryRss2.xml", "https://rss.walla.co.il/feed/7"]
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:25]: all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:30]: all_articles.append({'title': e.title, 'link': e.link})
         except: continue
     
     all_articles.extend(scrape_sport5_headlines())
@@ -142,8 +141,8 @@ def main():
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                print(f"DEBUG [MATCH]: נמצאה כתבה רלוונטית: {link}")
-                prompt = f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם, החזר רק את המילה SKIP.\n\nכתבה: {content[:2500]}"
+                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
+                prompt = f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. אם לא עליהם, החזר SKIP.\n\nכתבה: {content[:2500]}"
                 summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
@@ -151,7 +150,8 @@ def main():
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
                         with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "\n")
-                        time.sleep(5)
+                        # הפסקה קטנה בין שליחות כדי לא לעצבן את ה-AI
+                        time.sleep(3)
         except: continue
 
 if __name__ == "__main__": main()
