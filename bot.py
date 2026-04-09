@@ -18,6 +18,9 @@ ADMIN_ID = "425605110"
 TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 
+# מילות המפתח המקוריות בלבד
+HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
+
 MATCHDAY_POSTERS = [
     "https://i.ibb.co/LhxyQDdW/2026-04-07-12-21-58.png",
     "https://i.ibb.co/GfBwY4J1/IMG-7023.jpg",
@@ -26,9 +29,6 @@ MATCHDAY_POSTERS = [
     "https://i.ibb.co/ch9zN8Ly/IMG-7020.jpg",
     "https://i.ibb.co/v4phbhv3/IMG-7019.jpg"
 ]
-
-# הרחבתי את מילות המפתח כדי שלא נפספס אף כתבה (כולל עומר פרץ)
-HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "עומר פרץ", "אביחי יחיא"]
 
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
@@ -42,31 +42,30 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """פונקציה שמשתמשת רק במודל gemini-2.0-flash עם Retry חכם"""
+    """שימוש במודל 2.0 עם המתנה חובה למניעת 429 (עומס)"""
     if not GEMINI_API_KEY: return None
     
-    # הכתובת המדויקת שעובדת ב-2026
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    # זה הנתיב היחיד שלא החזיר 404 בלוגים שלך
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     
     for attempt in range(3):
         try:
-            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
+            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
             
             if res.status_code == 200:
                 return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             
-            elif res.status_code == 429: # עומס - מחכים קצת יותר כל פעם
-                wait_time = (attempt + 1) * 10
-                print(f"DEBUG [AI]: עומס (429). מחכה {wait_time} שניות...")
-                time.sleep(wait_time)
+            elif res.status_code == 429:
+                wait = (attempt + 1) * 12 # המתנה משמעותית יותר
+                print(f"DEBUG [AI]: עומס (429). ממתין {wait} שניות...")
+                time.sleep(wait)
             
             else:
-                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. Response: {res.text[:100]}")
+                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}")
                 return None
-        except Exception as e:
-            print(f"DEBUG [AI EXCEPTION]: {e}")
+        except:
             time.sleep(2)
-            
+            continue
     return None
 
 def send_telegram(text, method="sendMessage", payload=None):
@@ -101,7 +100,6 @@ def main():
             if ev_date == today_str:
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
-                
                 if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
                     md_text = f"*Match-Day*\nהפועל שלנו נגד *{opp_heb}*.\nיאללה מלחמה 💙"
                     if send_telegram(md_text, method="sendPhoto", payload={"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": md_text, "parse_mode": "Markdown"}):
@@ -109,16 +107,14 @@ def main():
     except: pass
 
     # 2. סריקת כתבות
-    print("DEBUG [RSS]: מתחיל סריקה אגרסיבית...")
-    # הוספתי את ספורט 5 ישירות לכאן בשיטה שדילגת עליה בטעות
+    print("DEBUG [RSS]: סורק פידים...")
     feeds = ["https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.ynet.co.il/Integration/StoryRss2.xml", "https://rss.walla.co.il/feed/7"]
     
     all_articles = []
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:40]: # סורקים עמוק מאוד
-                all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:35]: all_articles.append({'title': e.title, 'link': e.link})
         except: continue
 
     for art in all_articles:
@@ -126,19 +122,17 @@ def main():
         if link in history: continue
         
         try:
-            # בקשה עם Headers כדי שוואלה וספורט 5 לא יחסמו
+            # Headers למניעת חסימה מוואלה
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-            resp = requests.get(link, headers=headers, timeout=10)
-            soup = BeautifulSoup(resp.content, 'html.parser')
+            soup = BeautifulSoup(requests.get(link, headers=headers, timeout=10).content, 'html.parser')
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר מ-Gemini 2.0...")
-                prompt = (
-                    "אתה אוהד שרוף של הפועל פתח תקווה. סכם את הכתבה ב-3 משפטים. "
-                    "אם הכתבה לא מוסיפה מידע חדש או שהפועל מוזכרת רק בטעות, החזר רק את המילה SKIP.\n\n"
-                    f"כתבה: {content[:3000]}"
-                )
+                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
+                prompt = f"סכם ב-3 משפטים עבור אוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם ישירות, החזר SKIP.\n\nכתבה: {content[:2800]}"
+                
+                # המתנה קבועה לפני כל פנייה ל-AI למניעת עומס
+                time.sleep(2)
                 summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
@@ -146,7 +140,7 @@ def main():
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
                         with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "\n")
-                        time.sleep(10) # הפסקה גדולה בין כתבות למניעת עומס
+                        time.sleep(5)
         except: continue
 
 if __name__ == "__main__": main()
