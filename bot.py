@@ -33,24 +33,26 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """קריאה למודל 1.5 פלאש עם עצירה מיידית בשגיאה"""
+    """שימוש במודל 2.0 פלאש - המודל המעודכן ביותר ל-2026"""
     if not GEMINI_API_KEY: return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # מעבר למודל 2.0 כדי למנוע את ה-404 שראינו בלוג
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
         
-        # אם יש שגיאת מכסה (429) או כל שגיאה אחרת - אנחנו עוצרים הכל
-        print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. עוצר ריצה כדי למנוע חסימה.")
+        print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. הודעה: {res.text[:150]}")
         return "STOP_ALL"
-    except:
+    except Exception as e:
+        print(f"DEBUG [AI EXCEPTION]: {e}")
         return "STOP_ALL"
 
 def send_telegram(text, method="sendMessage", payload=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
     try:
         r = requests.post(url, json=payload, timeout=25)
+        print(f"DEBUG [TELEGRAM]: {method} Status: {r.status_code}")
         return r.status_code == 200
     except: return False
 
@@ -64,9 +66,8 @@ def main():
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
 
-    # 1. יום משחק (שליחת פוסטר פשוטה)
+    # 1. יום משחק
     if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
-        # בדיקה קצרה ב-API
         headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
         try:
             r = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=10).json()
@@ -82,9 +83,10 @@ def main():
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:15]: all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:20]: all_articles.append({'title': e.title, 'link': e.link})
         except: continue
 
+    # מעבדים רק כתבה אחת בכל ריצה כדי לשמור על הפרויקט החדש "נקי"
     for art in all_articles:
         link = art['link'].split('?')[0].replace("https://svcamz.", "https://www.")
         if link in history: continue
@@ -95,19 +97,23 @@ def main():
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
-                summary = get_ai_response(f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. כתבה: {content[:2000]}")
+                print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר מ-Gemini 2.0...")
+                
+                # המתנה קטנה לפני הקריאה ליתר ביטחון
+                time.sleep(5)
+                
+                summary = get_ai_response(f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. כתבה: {content[:2500]}")
                 
                 if summary == "STOP_ALL":
-                    print("LOG: נעצר עקב שגיאת מכסה בגוגל.")
-                    return # מפסיק את כל הריצה
+                    print("LOG: נעצר עקב שגיאה טכנית מול גוגל.")
+                    return 
 
                 if summary and "SKIP" not in summary.upper():
                     msg = f"*עדכון כחול 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        print("LOG: כתבה נשלחה. עוצר ריצה.")
-                        return # שולח רק אחת בכל ריצה כדי לשמור על המכסה
+                        print("LOG: הצלחה! כתבה נשלחה.")
+                        return 
         except: continue
 
 if __name__ == "__main__": main()
