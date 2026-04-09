@@ -9,7 +9,7 @@ import html
 import json
 from datetime import datetime, timedelta
 
-# הדפסה מיידית ללוגים (חשוב ל-GitHub Actions)
+# הדפסה מיידית ללוגים
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות ליבה ---
@@ -64,29 +64,17 @@ def send_telegram(text, method="sendMessage", payload=None):
         return False
 
 def get_ai_response(prompt):
-    if not GEMINI_API_KEY: 
-        print("LOG ERROR [AI]: Missing API KEY")
-        return None
-    
-    # שימוש בנתיב v1 היציב
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    if not GEMINI_API_KEY: return None
+    # שימוש ב-v1beta כי הלוג הראה ש-v1 לא מוצא את המודל
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
-        print(f"LOG [AI]: Sending prompt to Gemini...")
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         data = res.json()
-        
-        if res.status_code != 200:
-            print(f"LOG ERROR [AI]: Status {res.status_code}, Response: {res.text}")
-            return None
-            
-        if 'candidates' in data:
-            result = data['candidates'][0]['content']['parts'][0]['text'].strip()
-            print(f"LOG [AI]: Success! Response length: {len(result)}")
-            return result
+        if res.status_code == 200 and 'candidates' in data:
+            return data['candidates'][0]['content']['parts'][0]['text'].strip()
+        print(f"LOG ERROR [AI]: Status {res.status_code}, Response: {res.text}")
         return None
-    except Exception as e:
-        print(f"LOG ERROR [AI]: Connection failed: {e}")
-        return None
+    except: return None
 
 def scrape_sport5_headlines():
     print("LOG [SCRAPE]: Starting Sport5 direct scrape...")
@@ -95,16 +83,14 @@ def scrape_sport5_headlines():
     try:
         r = requests.get("https://www.sport5.co.il/liga.aspx?FolderID=64", headers=headers, timeout=15)
         soup = BeautifulSoup(r.content, 'html.parser')
-        # חיפוש לינקים של ספורט 5
-        for a in soup.select('a[href*="sport5.co.il/articles"]'):
-            title = a.get_text().strip()
+        # סריקה רחבה יותר של לינקים
+        for a in soup.find_all('a', href=True):
             url = a['href']
-            if len(title) > 15:
+            title = a.get_text().strip()
+            if 'articles.aspx' in url and len(title) > 20:
                 if not url.startswith('http'): url = "https://www.sport5.co.il" + url
                 links.append({'title': title, 'link': url})
-        print(f"LOG [SCRAPE]: Found {len(links)} potential links on Sport5")
-    except Exception as e:
-        print(f"LOG ERROR [SCRAPE]: {e}")
+    except: pass
     return links
 
 # --- לוגיקה מרכזית ---
@@ -112,68 +98,47 @@ def scrape_sport5_headlines():
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
-    print(f"--- תחילת ריצה: {now_il.strftime('%Y-%m-%d %H:%M:%S')} (יום {now_il.strftime('%A')}) ---")
+    print(f"--- תחילת ריצה: {now_il.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
-    # ניהול קבצים
-    for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt"]:
+    for f in ["seen_links.txt", "task_log.txt"]:
         if not os.path.exists(f): open(f, 'a').close()
     
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = set(line.strip() for line in f)
-    
+
     # 1. פינת ההיסטוריה (ימי רביעי)
-    if now_il.weekday() == 2:
-        print(f"LOG [HISTORY]: Today is Wednesday. Hour: {now_il.hour}")
-        if now_il.hour >= 10 and f"history_{today_str}" not in tasks:
-            print("LOG [HISTORY]: Triggering AI for history facts...")
-            fact = get_ai_response("כתוב 2 עובדות היסטוריות קצרות ומרגשות על הפועל פתח תקווה. הוסף אימוג'ים והתחל ב'הידעת?'.")
-            if fact:
-                if send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}", payload={"chat_id": ADMIN_ID, "text": f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}", "parse_mode": "Markdown"}):
-                    with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
-        else:
-            print("LOG [HISTORY]: Already sent today or too early.")
+    if now_il.weekday() == 2 and now_il.hour >= 10 and f"history_{today_str}" not in tasks:
+        fact = get_ai_response("כתוב 2 עובדות היסטוריות קצרות ומרגשות על הפועל פתח תקווה. הוסף אימוג'ים והתחל ב'הידעת?'.")
+        if fact:
+            if send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}", payload={"chat_id": ADMIN_ID, "text": f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}", "parse_mode": "Markdown"}):
+                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
     # 2. יום משחק (API)
-    print("LOG [API]: Checking for matches...")
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
         if r_next.get('events'):
             next_ev = r_next['events'][0]
             ev_date = (datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
-            print(f"LOG [API]: Next match found for: {ev_date}")
-            
             if ev_date == today_str:
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
-                
-                # Match-Day (12:00)
                 if now_il.hour >= 12 and f"matchday_{today_str}" not in tasks:
-                    print("LOG [MATCH]: Triggering Match-Day post...")
                     md_text = f"*Match-Day*\nהפועל שלנו נגד *{opp_heb}*.\nיאללה מלחמה 💙"
                     if send_telegram(md_text, method="sendPhoto", payload={"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": md_text, "parse_mode": "Markdown"}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
-                
-                # הימורים (15:00)
                 if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
-                    print("LOG [MATCH]: Triggering Betting poll...")
                     if send_telegram("", method="sendPoll", payload={"chat_id": ADMIN_ID, "question": f"הימורים נגד {opp_heb}?", "options": ["ניצחון 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
-        else:
-            print("LOG [API]: No upcoming matches found in API.")
-    except Exception as e:
-        print(f"LOG ERROR [API]: {e}")
+    except: pass
 
     # 3. סריקת כתבות
-    print("LOG [ARTICLES]: Starting RSS scan...")
     all_arts = []
     for feed_url in RSS_FEEDS:
         try:
             f = feedparser.parse(requests.get(feed_url, timeout=15).content)
-            print(f"LOG [RSS]: Scanned {feed_url}, found {len(f.entries)} entries")
             for e in f.entries[:10]: all_arts.append({'title': e.title, 'link': e.link})
         except: continue
-    
     all_arts.extend(scrape_sport5_headlines())
 
     for art in all_arts:
@@ -181,22 +146,15 @@ def main():
         if link in history: continue
         
         try:
-            print(f"LOG [CHECK]: Testing article: {art['title'][:40]}...")
             soup = BeautifulSoup(requests.get(link, timeout=10).content, 'html.parser')
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all('p')])
-            
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
-                print(f"LOG [MATCH]: Keyword found in {link}. Sending to AI...")
                 summary = get_ai_response(f"סכם ב-3 משפטים לאוהדי הפועל פתח תקווה. אם לא עליהם, רשום SKIP.\n\nכתבה: {content[:2000]}")
                 if summary and "SKIP" not in summary.upper():
                     msg = f"*עדכון כחול 💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
-                        print(f"LOG [SUCCESS]: Sent article: {link}")
                         time.sleep(3)
-        except Exception as e:
-            print(f"LOG ERROR [ARTICLE]: {link} -> {e}")
-
-    print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---")
+        except: continue
 
 if __name__ == "__main__": main()
