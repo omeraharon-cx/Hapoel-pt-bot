@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # הדפסה מיידית ללוגים
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- הגדרות ליבה (Secrets) ---
+# --- הגדרות ליבה ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
@@ -19,10 +19,8 @@ TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
-# סגל שחקנים (דיפולט לסקר MVP)
 DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד", "קוסטה", "שביט מזל", "קליי", "סונגה", "אלטמן"]
 
-# תרגום שחקנים מ-API
 PLAYER_MAP = { 
     "Omer Katz": "עומר כץ", "Orel Dgani": "אוראל דגני", "Nadav Niddam": "נדב נידם", 
     "Yonatan Cohen": "יונתן כהן", "Roee David": "רועי דוד", "Itay Rotman": "איתי רוטמן", 
@@ -31,7 +29,6 @@ PLAYER_MAP = {
     "Dror Nir": "דרור ניר", "Shahar Rosen": "שחר רוזן", "Idan Cohen": "עידן כהן"
 }
 
-# פוסטרים ושירי ניצחון
 MATCHDAY_POSTERS = [
     "https://i.ibb.co/LhxyQDdW/2026-04-07-12-21-58.png",
     "https://i.ibb.co/GfBwY4J1/IMG-7023.jpg",
@@ -52,13 +49,18 @@ TEAM_TRANSLATION = {
     "Hapoel Beer Sheva": "הפועל באר שבע", "Beitar Jerusalem": "בית\"ר ירושלים",
     "Maccabi Bnei Reineh": "מכבי בני ריינה", "Ironi Tiberias": "עירוני טבריה",
     "Bnei Sakhnin": "בני סכנין", "M.S. Ashdod": "מ.ס. אשדוד", 
-    "Hapoel Tel Aviv": "הפועל תל אביב", "Hapoel Haifa": "הפועל חיפה", 
-    "Maccabi Netanya": "מכבי נתניה", "Hapoel Jerusalem": "הפועל ירושלים",
-    "Hapoel Hadera": "הפועל חדרה", "Ironi Kiryat Shmona": "עירוני קרית שמונה", 
-    "Maccabi Petah Tikva": "מכבי פתח תקווה", "Hapoel Petah Tikva": "הפועל פתח תקווה"
+    "Hapoel Haifa": "הפועל חיפה", "Maccabi Netanya": "מכבי נתניה", 
+    "Hapoel Jerusalem": "הפועל ירושלים", "Hapoel Hadera": "הפועל חדרה", 
+    "Ironi Kiryat Shmona": "עירוני קרית שמונה", "Maccabi Petah Tikva": "מכבי פתח תקווה"
 }
 
-RSS_FEEDS = ["https://rss.walla.co.il/feed/7", "https://www.hapoelpt.com/blog-feed.xml", "https://www.one.co.il/cat/rss/", "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64", "https://www.ynet.co.il/Integration/StoryRss2.xml"]
+RSS_FEEDS = [
+    "https://rss.walla.co.il/feed/7",
+    "https://www.hapoelpt.com/blog-feed.xml",
+    "https://www.one.co.il/cat/rss/",
+    "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64",
+    "https://www.ynet.co.il/Integration/StoryRss2.xml"
+]
 
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
@@ -77,7 +79,7 @@ def send_telegram(text, method="sendMessage", payload=None):
 
 def get_ai_response(prompt):
     if not GEMINI_API_KEY: return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
@@ -95,15 +97,13 @@ def main():
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = f.read()
     with open("recent_summaries.txt", 'r', encoding='utf-8') as f: recent_sums = f.read()
 
-    # 1. פינת ההיסטוריה השבועית (ימי רביעי ב-12:00)
+    # 1. היסטוריה שבועית (רביעי ב-12:00)
     if now_il.weekday() == 2 and now_il.hour == 12 and f"history_{today_str}" not in tasks:
-        prompt = "כתוב 2 עובדות היסטוריות קצרות על הפועל פתח תקווה (שנות ה-50 וה-90). התחל ב'הידעת?'."
-        fact = get_ai_response(prompt)
-        if fact:
-            if send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}"):
-                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
+        fact = get_ai_response("כתוב 2 עובדות היסטוריות קצרות על הפועל פתח תקווה. התחל ב'הידעת?'.")
+        if fact and send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}"):
+            with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
-    # 2. ניהול יום משחק
+    # 2. יום משחק וסיום משחק (API)
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
@@ -112,17 +112,13 @@ def main():
             if (datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d') == today_str:
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
-                
                 if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
-                    md_text = f"*Match-Day*\nהפועל נגד *{opp_heb}*.\nיאללה מלחמה! 💙"
-                    if send_telegram(None, "sendPhoto", {"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
+                    if send_telegram(None, "sendPhoto", {"chat_id": ADMIN_ID, "photo": random.choice(MATCHDAY_POSTERS), "caption": f"*Match-Day*\nנגד *{opp_heb}*. יאללה מלחמה! 💙"}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
-
                 if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
                     if send_telegram(None, "sendPoll", {"chat_id": ADMIN_ID, "question": f"מה ההימור נגד {opp_heb}?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
 
-        # 3. סיום משחק וסקר MVP (כולל תיקון תוצאה)
         r_last = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers_api, timeout=15).json()
         if r_last.get('events'):
             last_ev = r_last['events'][0]
@@ -131,52 +127,55 @@ def main():
                     is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
                     my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
                     opp_heb = TEAM_TRANSLATION.get(last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name'], "היריבה")
-                    
-                    if my > opp_s:
-                        res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} ({my}-{opp_s}) 💙"
-                    elif my == opp_s:
-                        res_txt = f"*סיום המשחק: תיקו {my}-{opp_s} נגד {opp_heb}.*\nממשיכים הלאה בראש מורם, יאללה הפועל 💙"
-                    else:
-                        res_txt = f"*סיום המשחק: הפסד {my}-{opp_s} נגד {opp_heb}.*\nמרימים את הראש וממשיכים להילחם, יאללה הפועל 💙"
-                    
-                    markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": ONE_TABLE_URL}]]}
-                    if send_telegram(res_txt, payload={"chat_id": ADMIN_ID, "text": res_txt, "parse_mode": "Markdown", "reply_markup": markup}):
+                    res_txt = f"{random.choice(WIN_CHANTS)}\n\n*נצחון!* ({my}-{opp_s}) 💙" if my > opp_s else f"*סיום:* {my}-{opp_s} נגד {opp_heb}."
+                    if send_telegram(res_txt, payload={"chat_id": ADMIN_ID, "text": res_txt, "parse_mode": "Markdown", "reply_markup": {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": ONE_TABLE_URL}]]}}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
-                    
                     if f"mvp_{today_str}" not in tasks:
-                        players_to_poll = []
+                        players = DEFAULT_PLAYERS
                         try:
                             r_lineups = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/event/{last_ev['id']}/lineups", headers=headers_api, timeout=15).json()
-                            side = 'home' if is_h else 'away'
-                            for p in r_lineups.get(side, {}).get('players', []):
-                                name_eng = p.get('player', {}).get('name')
-                                players_to_poll.append(PLAYER_MAP.get(name_eng, name_eng))
+                            players = [PLAYER_MAP.get(p['player']['name'], p['player']['name']) for p in r_lineups['home' if is_h else 'away']['players']]
                         except: pass
-                        if not players_to_poll: players_to_poll = DEFAULT_PLAYERS
-                        send_telegram(None, "sendPoll", {"chat_id": ADMIN_ID, "question": "מי המצטיין שלכם היום? ⚽️", "options": players_to_poll[:10], "is_anonymous": False})
+                        send_telegram(None, "sendPoll", {"chat_id": ADMIN_ID, "question": "מי המצטיין? ⚽️", "options": players[:10], "is_anonymous": False})
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
     except: pass
 
-    # 4. סריקת כתבות
+    # 4. סריקת כתבות עם לוגים מפורטים
+    print("DEBUG: מתחיל סריקת אתרים...")
     for feed_url in RSS_FEEDS:
+        print(f"DEBUG: סורק את הפיד: {feed_url}")
         try:
             feed = feedparser.parse(requests.get(feed_url, timeout=20).content)
-            for entry in feed.entries[:15]:
+            print(f"DEBUG: נמצאו {len(feed.entries)} כתבות בפיד.")
+            for entry in feed.entries[:50]:
                 link = entry.link.split('?')[0].replace("https://svcamz.", "https://www.")
-                if link in history: continue
+                
+                # לוג לבדיקת הכתבה שאתה מחפש
+                if "walla" in link and "3829194" in link:
+                    print(f"DEBUG: !!! נמצאה הכתבה שחיפשת מוואלה: {link}")
+
+                if link in history:
+                    continue
+                
+                content = entry.title
                 try:
                     soup = BeautifulSoup(requests.get(entry.link, timeout=15).content, 'html.parser')
-                    content = " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
-                except: content = entry.title
-                if any(k.lower() in (entry.title + content).lower() for k in ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פ\"ת", "מלאבס"]):
+                    content += " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
+                except: pass
+
+                if any(k.lower() in content.lower() for k in ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פ\"ת", "מלאבס"]):
+                    print(f"DEBUG: נמצאה כתבה פוטנציאלית: {entry.title}")
                     prompt = f"האם הכתבה עוסקת בעיקרה בהפועל פתח תקווה? אם כן, סכם ב-3 משפטים. אם לא, החזר SKIP.\nכתבה: {content[:2500]}"
                     summary = get_ai_response(prompt)
                     if summary and "SKIP" not in summary.upper():
-                        msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
-                        if send_telegram(msg):
-                            with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
-                            with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "|||")
-                            time.sleep(5)
-        except: continue
+                        dup_p = f"האם הנושא כבר דווח? קודמים: {recent_sums[-600:]}\nחדש: {entry.title}"
+                        if "YES" not in (get_ai_response(dup_p) or "NO").upper():
+                            if send_telegram(f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"):
+                                with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
+                                with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "|||")
+                                print(f"LOG SUCCESS: {link}")
+                                time.sleep(10)
+        except Exception as e:
+            print(f"DEBUG ERROR בפיד {feed_url}: {e}")
 
 if __name__ == "__main__": main()
