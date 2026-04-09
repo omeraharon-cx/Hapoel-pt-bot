@@ -159,8 +159,15 @@ def main():
                     summary = get_ai_response(summary_prompt)
                     
                     if summary and "SKIP" not in summary.upper():
-                        dup_p = f"האם הנושא כבר דווח? קודמים: {recent_sums[-600:]}\nחדש: {entry.title}"
-                        if "YES" not in (get_ai_response(dup_p) or "NO").upper():
+                        dup_p = (
+    f"השווה בין הכותרת החדשה לסיכומים הקודמים.\n"
+    f"האם הם עוסקים באותו אירוע או חדשה ספציפית?\n"
+    f"החזר YES אם זו כפילות, NO אם זה נושא שונה.\n"
+    f"החזר רק המילה YES או NO בלבד, ללא שום טקסט נוסף.\n\n"
+    f"סיכומים קודמים: {recent_sums[-800:]}\n"
+    f"כותרת חדשה: {entry.title}"
+)
+                        
                             msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({link})"
                             if send_telegram(msg):
                                 with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
