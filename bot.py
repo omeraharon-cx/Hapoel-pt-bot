@@ -17,8 +17,9 @@ RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 ADMIN_ID = "425605110"
 TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
+ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
-# מילות המפתח המקוריות בלבד
+# מילות המפתח המקוריות
 HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "הפועל פתח תקוה", "הפועל פ\"ת", "מלאבס", "הכחולים", "הפועל מבנה"]
 
 MATCHDAY_POSTERS = [
@@ -33,7 +34,7 @@ MATCHDAY_POSTERS = [
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
     "Hapoel Beer Sheva": "הפועל באר שבע", "Beitar Jerusalem": "בית\"ר ירושלים",
-    "Hapoel Tel Aviv": "הפועל תל אביב", "M.S. Ashdod": "מ.ס. אשדוד", "Bnei Sakhnin": "בני סכנין"
+    "Hapoel Tel Aviv": "הפועל תל אביב", "M.S. Ashdod": "מ.ס. אשדוד"
 }
 
 # --- פונקציות עזר ---
@@ -42,29 +43,24 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def get_ai_response(prompt):
-    """שימוש במודל 2.0 עם המתנה חובה למניעת 429 (עומס)"""
+    """פונקציה חסינה עם המתנה ארוכה לעומס (429)"""
     if not GEMINI_API_KEY: return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    # זה הנתיב היחיד שלא החזיר 404 בלוגים שלך
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    for attempt in range(3):
+    for attempt in range(4):
         try:
-            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
-            
+            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
             if res.status_code == 200:
                 return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-            
             elif res.status_code == 429:
-                wait = (attempt + 1) * 12 # המתנה משמעותית יותר
-                print(f"DEBUG [AI]: עומס (429). ממתין {wait} שניות...")
+                wait = 60 * (attempt + 1)
+                print(f"DEBUG [AI]: עומס (429). מחכה {wait} שניות לניקוי מכסה...")
                 time.sleep(wait)
-            
             else:
-                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}")
+                print(f"DEBUG [AI ERROR]: סטטוס {res.status_code}. מדלג.")
                 return None
         except:
-            time.sleep(2)
+            time.sleep(5)
             continue
     return None
 
@@ -114,7 +110,7 @@ def main():
     for url in feeds:
         try:
             f = feedparser.parse(requests.get(url, timeout=15).content)
-            for e in f.entries[:35]: all_articles.append({'title': e.title, 'link': e.link})
+            for e in f.entries[:25]: all_articles.append({'title': e.title, 'link': e.link})
         except: continue
 
     for art in all_articles:
@@ -122,17 +118,18 @@ def main():
         if link in history: continue
         
         try:
-            # Headers למניעת חסימה מוואלה
+            # הוספת Headers כדי שלא יחסמו אותנו
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
             soup = BeautifulSoup(requests.get(link, headers=headers, timeout=10).content, 'html.parser')
             content = art['title'] + " " + " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
             
             if any(k.lower() in content.lower() for k in HAPOEL_KEYS):
                 print(f"DEBUG [MATCH]: נמצאה כתבה: {link}. מבקש תקציר...")
-                prompt = f"סכם ב-3 משפטים עבור אוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם ישירות, החזר SKIP.\n\nכתבה: {content[:2800]}"
                 
-                # המתנה קבועה לפני כל פנייה ל-AI למניעת עומס
-                time.sleep(2)
+                # מניעת עומס: מחכים 20 שניות לפני כל פנייה ל-AI
+                time.sleep(20)
+                
+                prompt = f"סכם ב-3 משפטים עבור אוהדי הפועל פתח תקווה. אם הכתבה לא עוסקת בהם ישירות, החזר SKIP.\n\nכתבה: {content[:2800]}"
                 summary = get_ai_response(prompt)
                 
                 if summary and "SKIP" not in summary.upper():
@@ -140,7 +137,8 @@ def main():
                     if send_telegram(msg, payload={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}):
                         with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(link + "\n")
                         with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "\n")
-                        time.sleep(5)
+                        # הפסקה קטנה נוספת אחרי הצלחה
+                        time.sleep(10)
         except: continue
 
 if __name__ == "__main__": main()
