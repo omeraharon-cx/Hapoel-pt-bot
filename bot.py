@@ -167,15 +167,22 @@ def main():
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
                 
+                # פוסטר בוקר (נוסח מרגש)
                 if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
-                    md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
-                               f"יאללה הפועל, לתת הכל בשביל הסמל!\nמלחמה היום הפועלללל 🚀\n\n"
-                               f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\nהפועל עולה עולההה, הפועל, הפועל עולהה 💙")
+                    md_text = (
+                        f"MatchDay Hapoel 💙\n"
+                        f"הפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
+                        f"יאללה הפועל, לתת הכל בשביל הסמל!\n"
+                        f"מלחמה היום הפועלללל 🚀\n\n"
+                        f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
+                        f"הפועל עולה עולההה, הפועל, הפועל עולהה 💙"
+                    )
                     if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
 
+                # סקר הימורים (שאלה מעודכנת)
                 if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
-                    if send_telegram(None, "sendPoll", {"question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
+                    if send_telegram(None, "sendPoll", {"poll_id": None, "question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
 
         # 3. תוצאת סיום וסקר MVP
@@ -188,14 +195,18 @@ def main():
                     my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
                     opp_heb = TEAM_TRANSLATION.get(last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name'], "היריבה")
                     
-                    if my > opp_s: res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} (תוצאה: {my}-{opp_s})\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
-                    elif my == opp_s: res_txt = f"תיקו {my}-{opp_s} בסיום המשחק. ממשיכים הלאה. יאללה הפועלללל 💙"
-                    else: res_txt = f"הפסד {my}-{opp_s} בסיום המשחק. מרימים את הראש וממשיכים הלאה. יאללה הפועל מלחמה 💙"
+                    if my > opp_s:
+                        res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} (תוצאה: {my}-{opp_s})\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
+                    elif my == opp_s:
+                        res_txt = f"תיקו {my}-{opp_s} בסיום המשחק. ממשיכים הלאה. יאללה הפועלללל 💙"
+                    else:
+                        res_txt = f"הפסד {my}-{opp_s} בסיום המשחק. מרימים את הראש וממשיכים הלאה. יאללה הפועל מלחמה 💙"
                     
                     markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}
                     if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
                     
+                    # סקר MVP (שאלה מעודכנת)
                     if f"mvp_{today_str}" not in tasks:
                         players = []
                         try:
@@ -225,8 +236,6 @@ def main():
                     pub_date = datetime(*entry.published_parsed[:6])
                 
                 if pub_date and (now_il - pub_date) > timedelta(days=7):
-                    # מדפיס ללוג רק פעם אחת כדי לא להעמיס
-                    if "google" not in feed_url: print(f"DEBUG: מדלג על כתבה ישנה ({pub_date.strftime('%Y-%m-%d')}): {entry.title}", flush=True)
                     continue
 
                 print(f"DEBUG: בודק כתבה: {entry.title}", flush=True)
@@ -245,14 +254,17 @@ def main():
                     if is_official:
                         prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP בשום פנים ואופן אם הכתבה עוסקת בהפועל פתח תקווה, שחקניה, או מו\"מ - גם אם המידע קצר.\n\n" + f"טקסט: {content[:2500]}")
+                        # שיפור פילטר הריכוז: סינון כתבות שאינן מתמקדות בהפועל פ"ת
+                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP אם הכתבה עוסקת בהפועל פתח תקווה, שחקניה, או מו\"מ. 4. חשוב: אם הכתבה עוסקת ברובה בקבוצה אחרת והפועל רק מוזכרת בדרך אגב או כיריבה (למשל כתבה על שחקן של הפועל ת״א), החזר 'SKIP'.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
-                    if (not summary or "SKIP" in summary.upper() or "EMPTY" in summary.upper()) and any(k.lower() in entry.title.lower() for k in HAPOEL_KEYS):
-                         summary = entry.title
+                    if (not summary or "SKIP" in summary.upper() or "EMPTY" in summary.upper()) and any(k.lower() in entry.title.lower() for k in HAPOEL_KEYS) and not is_official:
+                         if "SKIP" in (summary or "").upper(): summary = "SKIP"
+                         else: summary = entry.title
 
-                    if summary and len(summary) > 10 and "Waiting for text" not in summary:
-                        dup_p = f"האם הכותרת היא כפילות? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
+                    if summary and "SKIP" not in summary.upper() and len(summary) > 10 and "Waiting for text" not in summary:
+                        # שיפור פילטר המסר: מניעת כפילויות תוכן מאתרים שונים
+                        dup_p = f"האם הידיעה הזו מדווחת על אותו נושא בדיוק כמו באלו? ענה YES/NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
                             success = False
@@ -265,7 +277,7 @@ def main():
                                 processed_count += 1
                                 print(f"DEBUG: נשלח בהצלחה: {entry.title}", flush=True)
                                 time.sleep(10)
-                        else: print(f"DEBUG: כפילות נושא זוהתה: {entry.title}", flush=True)
+                        else: print(f"DEBUG: כפילות תוכן זוהתה: {entry.title}", flush=True)
                     else: print(f"DEBUG: ה-AI החליט לדלג או שהטקסט לא הספיק: {entry.title}", flush=True)
                 else: print(f"DEBUG: מילות מפתח לא נמצאו: {entry.title}", flush=True)
         except Exception as e: print(f"DEBUG RSS ERROR: {feed_url} - {e}", flush=True)
