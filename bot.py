@@ -109,6 +109,7 @@ def get_ai_response(prompt):
 def extract_article_data(url):
     """מחלץ תוכן ותמונה - פותר לינקים של גוגל ומעקף ספורט 5"""
     try:
+        # פתרון ללינקים של גוגל - לפעמים צריך כמה ניסיונות לעקוף את דף ההסכמה
         resp = requests.get(url, headers=RSS_HEADERS, timeout=15, allow_redirects=True)
         final_url = resp.url
         soup = BeautifulSoup(resp.content, 'html.parser')
@@ -117,11 +118,11 @@ def extract_article_data(url):
         og_image = soup.find("meta", property="og:image")
         if og_image: image = og_image["content"]
         
-        # סינון תמונות לוגו של גוגל ניוז
+        # סינון לוגו גוגל ניוז
         if image and ("googleusercontent" in image or "google.com/logos" in image):
             image = None
 
-        # זיהוי תוכן משופר (במיוחד לספורט 5 וספורט 1)
+        # חיפוש תוכן במספר דרכים
         container = (
             soup.find('div', class_='article-body') or 
             soup.find('div', class_='article-content') or
@@ -197,7 +198,6 @@ def main():
                     my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
                     opp_heb = TEAM_TRANSLATION.get(last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name'], "היריבה")
                     
-                    # ניסוחים מדויקים מהטסטים
                     if my > opp_s:
                         res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} (תוצאה: {my}-{opp_s})\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
                     elif my == opp_s:
@@ -209,7 +209,7 @@ def main():
                     if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
                     
-                    # סקר MVP (שאלה מעודכנת)
+                    # סקר MVP
                     if f"mvp_{today_str}" not in tasks:
                         players = []
                         try:
@@ -232,17 +232,13 @@ def main():
             feed = feedparser.parse(resp.content)
             for entry in feed.entries[:45]:
                 if processed_count >= 5: break
-                
                 print(f"DEBUG: בודק כתבה: {entry.title}", flush=True)
-                
                 raw_link = entry.link.replace("https://svcamz.", "https://www.")
                 content, image, final_link = extract_article_data(raw_link)
                 clean_link = final_link.split('?')[0] if "sport5" not in final_link and "hapoelpt" not in final_link else final_link
-                
                 if clean_link in history:
                     print(f"DEBUG: כבר נשלח בעבר: {entry.title}", flush=True)
                     continue
-                
                 if not content: content = entry.title
                 is_official = "hapoelpt.com" in clean_link
 
@@ -250,20 +246,21 @@ def main():
                     if is_official:
                         prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        # שינוי ההנחיה למניעת SKIP - הבוט הופך לתשתיתי ומכיל הכל
-                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP בשום פנים ואופן אם הכתבה עוסקת בהפועל פתח תקווה, שחקניה, או מו\"מ - גם אם המידע קצר או שמועתי. אם אין שום מידע רלוונטי בכלל, החזר 'EMPTY'.\n\n" + f"טקסט: {content[:2500]}")
+                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP בשום פנים ואופן אם הכתבה עוסקת בהפועל פתח תקווה, שחקניה, או מו\"מ - גם אם המידע קצר.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
                     
-                    # בדיקת איכות: אם ה-AI החזיר תקציר הגיוני ולא שגיאה או EMPTY - נשלח
-                    if summary and "SKIP" not in summary.upper() and "EMPTY" not in summary.upper() and len(summary) > 25 and "Waiting for text" not in summary:
+                    # פולבק לכותרת אם ה-AI נכשל בחילוץ תוכן
+                    if (not summary or "SKIP" in summary.upper() or "EMPTY" in summary.upper()) and any(k.lower() in entry.title.lower() for k in HAPOEL_KEYS):
+                         summary = entry.title
+
+                    if summary and len(summary) > 10 and "Waiting for text" not in summary:
                         dup_p = f"האם הכותרת היא כפילות? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
                             success = False
                             if image: success = send_telegram(None, "sendPhoto", {"photo": image, "caption": full_msg})
                             if not success: success = send_telegram(full_msg)
-                            
                             if success:
                                 history.add(clean_link)
                                 with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(clean_link + "\n")
