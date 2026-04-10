@@ -109,7 +109,6 @@ def get_ai_response(prompt):
 def extract_article_data(url):
     """מחלץ תוכן ותמונה - פותר לינקים של גוגל ומעקף ספורט 5"""
     try:
-        # פתרון ללינקים של גוגל - לפעמים צריך כמה ניסיונות לעקוף את דף ההסכמה
         resp = requests.get(url, headers=RSS_HEADERS, timeout=15, allow_redirects=True)
         final_url = resp.url
         soup = BeautifulSoup(resp.content, 'html.parser')
@@ -118,11 +117,9 @@ def extract_article_data(url):
         og_image = soup.find("meta", property="og:image")
         if og_image: image = og_image["content"]
         
-        # סינון לוגו גוגל ניוז
         if image and ("googleusercontent" in image or "google.com/logos" in image):
             image = None
 
-        # חיפוש תוכן במספר דרכים
         container = (
             soup.find('div', class_='article-body') or 
             soup.find('div', class_='article-content') or
@@ -147,7 +144,7 @@ def main():
 
     # וידוא קבצים
     for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt"]:
-        if not os.path.exists(f): open(f, 'a').close()
+        if not os.path.exists(f): open(f, 'a', encoding='utf-8').close()
     
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = f.read()
@@ -170,20 +167,13 @@ def main():
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
                 
-                # פוסטר בוקר (נוסח מרגש)
                 if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
-                    md_text = (
-                        f"MatchDay Hapoel 💙\n"
-                        f"הפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
-                        f"יאללה הפועל, לתת הכל בשביל הסמל!\n"
-                        f"מלחמה היום הפועלללל 🚀\n\n"
-                        f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
-                        f"הפועל עולה עולההה, הפועל, הפועל עולהה 💙"
-                    )
+                    md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
+                               f"יאללה הפועל, לתת הכל בשביל הסמל!\nמלחמה היום הפועלללל 🚀\n\n"
+                               f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\nהפועל עולה עולההה, הפועל, הפועל עולהה 💙")
                     if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
 
-                # סקר הימורים (שאלה מעודכנת)
                 if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
                     if send_telegram(None, "sendPoll", {"question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
@@ -198,18 +188,14 @@ def main():
                     my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
                     opp_heb = TEAM_TRANSLATION.get(last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name'], "היריבה")
                     
-                    if my > opp_s:
-                        res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} (תוצאה: {my}-{opp_s})\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
-                    elif my == opp_s:
-                        res_txt = f"תיקו {my}-{opp_s} בסיום המשחק. ממשיכים הלאה. יאללה הפועלללל 💙"
-                    else:
-                        res_txt = f"הפסד {my}-{opp_s} בסיום המשחק. מרימים את הראש וממשיכים הלאה. יאללה הפועל מלחמה 💙"
+                    if my > opp_s: res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} (תוצאה: {my}-{opp_s})\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
+                    elif my == opp_s: res_txt = f"תיקו {my}-{opp_s} בסיום המשחק. ממשיכים הלאה. יאללה הפועלללל 💙"
+                    else: res_txt = f"הפסד {my}-{opp_s} בסיום המשחק. מרימים את הראש וממשיכים הלאה. יאללה הפועל מלחמה 💙"
                     
                     markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}
                     if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
                     
-                    # סקר MVP
                     if f"mvp_{today_str}" not in tasks:
                         players = []
                         try:
@@ -232,13 +218,26 @@ def main():
             feed = feedparser.parse(resp.content)
             for entry in feed.entries[:45]:
                 if processed_count >= 5: break
+                
+                # בדיקת תאריך: אם הכתבה ישנה יותר מ-7 ימים, נדלג
+                pub_date = None
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime(*entry.published_parsed[:6])
+                
+                if pub_date and (now_il - pub_date) > timedelta(days=7):
+                    # מדפיס ללוג רק פעם אחת כדי לא להעמיס
+                    if "google" not in feed_url: print(f"DEBUG: מדלג על כתבה ישנה ({pub_date.strftime('%Y-%m-%d')}): {entry.title}", flush=True)
+                    continue
+
                 print(f"DEBUG: בודק כתבה: {entry.title}", flush=True)
                 raw_link = entry.link.replace("https://svcamz.", "https://www.")
                 content, image, final_link = extract_article_data(raw_link)
                 clean_link = final_link.split('?')[0] if "sport5" not in final_link and "hapoelpt" not in final_link else final_link
+                
                 if clean_link in history:
                     print(f"DEBUG: כבר נשלח בעבר: {entry.title}", flush=True)
                     continue
+                
                 if not content: content = entry.title
                 is_official = "hapoelpt.com" in clean_link
 
@@ -249,8 +248,6 @@ def main():
                         prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP בשום פנים ואופן אם הכתבה עוסקת בהפועל פתח תקווה, שחקניה, או מו\"מ - גם אם המידע קצר.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
-                    
-                    # פולבק לכותרת אם ה-AI נכשל בחילוץ תוכן
                     if (not summary or "SKIP" in summary.upper() or "EMPTY" in summary.upper()) and any(k.lower() in entry.title.lower() for k in HAPOEL_KEYS):
                          summary = entry.title
 
