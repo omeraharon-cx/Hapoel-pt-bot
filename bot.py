@@ -20,7 +20,7 @@ TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
-# --- סגל שחקנים (דיפולט לסקר MVP) ---
+# --- סגל שחקנים (10 שחקנים מעודכן - בלי רז ורם, עם נועם, בוני ודיארה) ---
 DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד", "קוסטה", "שביט מזל", "נועם כהן", "בוני", "דיארה"]
 
 PLAYER_MAP = { 
@@ -50,7 +50,7 @@ WIN_CHANTS = [
     "מי שלא קופץ לוזון, מי שלא קופץ לוזון! 💙"
 ]
 
-# --- תרגום קבוצות ליגת העל ---
+# --- תרגום קבוצות ליגת העל 2026 ---
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
     "Hapoel Beer Sheva": "הפועל באר שבע", "Beitar Jerusalem": "בית\"ר ירושלים",
@@ -89,7 +89,7 @@ def send_telegram(text, method="sendMessage", payload=None):
         payload = {"chat_id": ADMIN_ID, "text": text, "parse_mode": "Markdown"}
     else:
         payload["chat_id"] = ADMIN_ID
-        if method in ["sendMessage", "sendPhoto"]: payload["parse_mode"] = "Markdown"
+        if "parse_mode" not in payload: payload["parse_mode"] = "Markdown"
     try:
         r = requests.post(url, json=payload, timeout=25)
         return r.status_code == 200
@@ -114,11 +114,17 @@ def extract_article_data(url):
         og_image = soup.find("meta", property="og:image")
         if og_image: image = og_image["content"]
         
-        if "sport5.co.il" in final_url:
-            container = (soup.find('div', class_='article-body') or soup.find('article') or soup.find('div', id='article-content'))
-            content = " ".join([el.get_text() for el in container.find_all(['p', 'h1', 'h2'])]) if container else ""
+        # זיהוי תוכן משופר (במיוחד לספורט 5)
+        container = (
+            soup.find('div', class_='article-body') or 
+            soup.find('div', class_='article-content') or
+            soup.find('article') or
+            soup.find('div', id='article-content')
+        )
+        if container:
+            content = " ".join([el.get_text() for el in container.find_all(['p', 'h1', 'h2', 'h3'])])
         else:
-            content = " ".join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2'])])
+            content = " ".join([p.get_text() for p in soup.find_all('p')])
             
         return content, image, final_url
     except: return "", None, url
@@ -140,10 +146,11 @@ def main():
     # 1. פינת ההיסטוריה (רביעי ב-12:00)
     if now_il.weekday() == 2 and now_il.hour == 12 and f"history_{today_str}" not in tasks:
         fact = get_ai_response("כתוב 2 עובדות היסטוריות קצרות על הפועל פתח תקווה. אחת משנות ה-50 ואחת משנות ה-90. הוסף אימוג'ים והתחל ב'הידעת?'.")
-        if fact and send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}"):
-            with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
+        if fact:
+            if send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}"):
+                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
-    # 2. יום משחק (RapidAPI)
+    # 2. ניהול יום משחק (RapidAPI)
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
         r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
@@ -153,7 +160,7 @@ def main():
                 opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
                 
-                # פוסטר בוקר (נוסח חדש)
+                # פוסטר בוקר (נוסח מרגש)
                 if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
                     md_text = (
                         f"MatchDay Hapoel 💙\n"
@@ -197,33 +204,35 @@ def main():
                     if f"mvp_{today_str}" not in tasks:
                         players = []
                         try:
-                            r_lineups = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/event/{last_ev['id']}/lineups", headers=headers_api, timeout=15).json()
-                            side = 'home' if is_h else 'away'
-                            players = [PLAYER_MAP.get(p['player']['name'], p['player']['name']) for p in r_lineups.get(side, {}).get('players', [])]
+                            r_l = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/event/{last_ev['id']}/lineups", headers=headers_api, timeout=15).json()
+                            players = [PLAYER_MAP.get(p['player']['name'], p['player']['name']) for p in r_l['home' if is_h else 'away']['players']]
                         except: pass
                         if not players: players = DEFAULT_PLAYERS
                         if send_telegram(None, "sendPoll", {"question": "מי המצטיין היום? ⚽️", "options": players[:10], "is_anonymous": False}):
                             with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
     except Exception as e: print(f"DEBUG MATCH ERROR: {e}", flush=True)
 
-    # 3. סריקת כתבות RSS (עד 3 לריצה)
+    # 3. סריקת כתבות RSS (עד 5 לריצה)
     processed_count = 0
-    print("DEBUG: מתחיל סריקת אתרים...", flush=True)
+    print("DEBUG: מתחיל סריקה...", flush=True)
     for feed_url in RSS_FEEDS:
-        if processed_count >= 3: break
-        print(f"DEBUG: סורק את הפיד: {feed_url}", flush=True)
+        if processed_count >= 5: break
+        print(f"DEBUG: סורק פיד: {feed_url}", flush=True)
         try:
             resp = requests.get(feed_url, headers=RSS_HEADERS, timeout=20)
             feed = feedparser.parse(resp.content)
             for entry in feed.entries[:45]:
-                if processed_count >= 3: break
+                if processed_count >= 5: break
                 
-                # עיבוד לינק חכם
                 raw_link = entry.link.replace("https://svcamz.", "https://www.")
                 content, image, final_link = extract_article_data(raw_link)
+                
+                # ניקוי לינק - לא לחתוך ספורט 5 והאתר הרשמי
                 clean_link = final_link.split('?')[0] if "sport5" not in final_link and "hapoelpt" not in final_link else final_link
                 
-                if clean_link in history: continue
+                if clean_link in history:
+                    continue
+                
                 if not content: content = entry.title
                 is_official = "hapoelpt.com" in clean_link
 
@@ -232,7 +241,7 @@ def main():
                     if is_official:
                         prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים (שעות, כרטיסים, הנחיות). התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים בגובה העיניים. חוק: אל תתחיל ב'כן/נו' או 'הכתבה עוסקת'. התחל ישר בחדשות.\n\n" + f"טקסט: {content[:2500]}")
+                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים בגובה העיניים. חוק: אל תתחיל ב'כן/נו' או 'הכתבה עוסקת'. התחל ישר בחדשות. תזכיר את 'הפועל'.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
                     if summary and ("SKIP" not in summary.upper() or is_official):
@@ -250,8 +259,11 @@ def main():
                                 with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(clean_link + "\n")
                                 with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "|||")
                                 processed_count += 1
-                                print(f"DEBUG: כתבה נשלחה בהצלחה: {entry.title}", flush=True)
+                                print(f"DEBUG: נשלח: {entry.title}", flush=True)
                                 time.sleep(10)
+                        else: print(f"DEBUG: כפילות נושא: {entry.title}", flush=True)
+                    else: print(f"DEBUG: SKIP/לא רלוונטי: {entry.title}", flush=True)
+                else: print(f"DEBUG: מילות מפתח לא נמצאו בכתבה: {entry.title}", flush=True)
         except Exception as e: print(f"DEBUG RSS ERROR: {feed_url} - {e}", flush=True)
 
     print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---", flush=True)
