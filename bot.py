@@ -8,7 +8,7 @@ import json
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
-# הדפסה מיידית ללוגים (חשוב ל-GitHub Actions)
+# הגדרה שמכריחה את פייתון להוציא לוגים מיד (חשוב ל-GitHub Actions)
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות ליבה (Secrets) ---
@@ -20,7 +20,7 @@ TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
-# --- סגל שחקנים (דיפולט לסקר MVP) - מעודכן ---
+# --- סגל שחקנים (דיפולט לסקר MVP) ---
 DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד", "קוסטה", "שביט מזל", "נועם כהן", "בוני", "דיארה"]
 
 PLAYER_MAP = { 
@@ -127,7 +127,7 @@ def extract_article_data(url):
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
-    print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} ---")
+    print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} ---", flush=True)
 
     # וידוא קבצים
     for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt"]:
@@ -139,7 +139,7 @@ def main():
 
     # 1. פינת ההיסטוריה (רביעי ב-12:00)
     if now_il.weekday() == 2 and now_il.hour == 12 and f"history_{today_str}" not in tasks:
-        fact = get_ai_response("כתוב 2 עובדות היסטוריות קצרות על הפועל פתח תקווה (50 ו-90). התחל ב'הידעת?'.")
+        fact = get_ai_response("כתוב 2 עובדות היסטוריות קצרות על הפועל פתח תקווה. אחת משנות ה-50 ואחת משנות ה-90. הוסף אימוג'ים והתחל ב'הידעת?'.")
         if fact and send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}"):
             with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
@@ -204,17 +204,21 @@ def main():
                         if not players: players = DEFAULT_PLAYERS
                         if send_telegram(None, "sendPoll", {"question": "מי המצטיין היום? ⚽️", "options": players[:10], "is_anonymous": False}):
                             with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
-    except Exception as e: print(f"DEBUG MATCH ERROR: {e}")
+    except Exception as e: print(f"DEBUG MATCH ERROR: {e}", flush=True)
 
-    # 3. סריקת כתבות (עד 3 לריצה)
+    # 3. סריקת כתבות RSS (עד 3 לריצה)
     processed_count = 0
+    print("DEBUG: מתחיל סריקת אתרים...", flush=True)
     for feed_url in RSS_FEEDS:
         if processed_count >= 3: break
+        print(f"DEBUG: סורק את הפיד: {feed_url}", flush=True)
         try:
-            feed = feedparser.parse(requests.get(feed_url, timeout=20).content)
+            resp = requests.get(feed_url, headers=RSS_HEADERS, timeout=20)
+            feed = feedparser.parse(resp.content)
             for entry in feed.entries[:45]:
                 if processed_count >= 3: break
                 
+                # עיבוד לינק חכם
                 raw_link = entry.link.replace("https://svcamz.", "https://www.")
                 content, image, final_link = extract_article_data(raw_link)
                 clean_link = final_link.split('?')[0] if "sport5" not in final_link and "hapoelpt" not in final_link else final_link
@@ -224,6 +228,7 @@ def main():
                 is_official = "hapoelpt.com" in clean_link
 
                 if is_official or any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
+                    # הגדרת Prompt לפי סוג כתבה
                     if is_official:
                         prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים (שעות, כרטיסים, הנחיות). התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
@@ -231,6 +236,7 @@ def main():
                     
                     summary = get_ai_response(prompt)
                     if summary and ("SKIP" not in summary.upper() or is_official):
+                        # בדיקת כפילות נושא
                         dup_p = f"האם הכותרת היא כפילות? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
@@ -244,7 +250,10 @@ def main():
                                 with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(clean_link + "\n")
                                 with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "|||")
                                 processed_count += 1
+                                print(f"DEBUG: כתבה נשלחה בהצלחה: {entry.title}", flush=True)
                                 time.sleep(10)
-        except Exception as e: print(f"DEBUG RSS ERROR: {feed_url} - {e}")
+        except Exception as e: print(f"DEBUG RSS ERROR: {feed_url} - {e}", flush=True)
+
+    print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---", flush=True)
 
 if __name__ == "__main__": main()
