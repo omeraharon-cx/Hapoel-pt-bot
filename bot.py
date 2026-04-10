@@ -100,7 +100,7 @@ def send_telegram(text, method="sendMessage", payload=None):
 
 def get_ai_response(prompt):
     if not GEMINI_API_KEY: return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
@@ -122,7 +122,8 @@ def extract_article_data(url):
             soup.find('div', class_='article-body') or 
             soup.find('div', class_='article-content') or
             soup.find('article') or
-            soup.find('div', id='article-content')
+            soup.find('div', id='article-content') or
+            soup.find('div', class_='content')
         )
         if container:
             content = " ".join([el.get_text() for el in container.find_all(['p', 'h1', 'h2', 'h3'])])
@@ -228,30 +229,31 @@ def main():
             for entry in feed.entries[:45]:
                 if processed_count >= 5: break
                 
+                print(f"DEBUG: בודק כתבה: {entry.title}", flush=True)
+                
                 raw_link = entry.link.replace("https://svcamz.", "https://www.")
                 content, image, final_link = extract_article_data(raw_link)
                 clean_link = final_link.split('?')[0] if "sport5" not in final_link and "hapoelpt" not in final_link else final_link
                 
                 if clean_link in history:
+                    print(f"DEBUG: כבר נשלח בעבר: {entry.title}", flush=True)
                     continue
                 
                 if not content: content = entry.title
                 is_official = "hapoelpt.com" in clean_link
 
                 if is_official or any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
-                    # הגדרת Prompt לפי סוג כתבה
                     if is_official:
-                        prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים (שעות, כרטיסים, הנחיות). התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
+                        prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים בגובה העיניים. חוק: אל תתחיל ב'כן/נו' או 'הכתבה עוסקת'. התחל ישר בחדשות. תזכיר את 'הפועל'.\n\n" + f"טקסט: {content[:2500]}")
+                        # שינוי ההנחיה למניעת SKIP על ידיעות שחקנים
+                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוק: אל תתחיל ב'כן/נו'. תמיד תזכיר את 'הפועל'. אל תעשה SKIP לידיעות על שחקנים (כולל מו\"מ, אימונים, פציעות או סתם עדכונים) - הכל חשוב.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
                     if summary and ("SKIP" not in summary.upper() or is_official):
-                        # בדיקת כפילות נושא
-                        dup_p = f"האם הכותרת היא כפילות? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
+                        dup_p = f"האם זו כפילות של: {recent_sums[-800:]}?\nחדש: {entry.title}. ענה YES/NO."
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
-                            
                             success = False
                             if image: success = send_telegram(None, "sendPhoto", {"photo": image, "caption": full_msg})
                             if not success: success = send_telegram(full_msg)
@@ -261,11 +263,11 @@ def main():
                                 with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(clean_link + "\n")
                                 with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "|||")
                                 processed_count += 1
-                                print(f"DEBUG: נשלח: {entry.title}", flush=True)
+                                print(f"DEBUG: נשלח בהצלחה: {entry.title}", flush=True)
                                 time.sleep(10)
-                        else: print(f"DEBUG: כפילות נושא: {entry.title}", flush=True)
-                    else: print(f"DEBUG: SKIP/לא רלוונטי: {entry.title}", flush=True)
-                else: print(f"DEBUG: מילות מפתח לא נמצאו בכתבה: {entry.title}", flush=True)
+                        else: print(f"DEBUG: כפילות נושא זוהתה: {entry.title}", flush=True)
+                    else: print(f"DEBUG: ה-AI החליט לדלג: {entry.title}", flush=True)
+                else: print(f"DEBUG: מילות מפתח לא נמצאו: {entry.title}", flush=True)
         except Exception as e: print(f"DEBUG RSS ERROR: {feed_url} - {e}", flush=True)
 
     print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---", flush=True)
