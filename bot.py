@@ -68,10 +68,10 @@ HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "ה
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
     "https://news.google.com/rss/search?q=הפועל+פתח+תקווה&hl=he&gl=IL&ceid=IL:he",
-    "https://rss.walla.co.il/feed/7",
+    "https://rss.walla.co.il/feed/3", # מדור ספורט וואלה (עודכן מ-7 ל-3)
     "https://www.one.co.il/cat/rss/",
     "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64",
-    "https://www.ynet.co.il/Integration/StoryRss2.xml"
+    "https://www.ynet.co.il/Integration/StoryRss3.xml" # מדור ספורט ynet (עודכן מ-2 ל-3)
 ]
 
 RSS_HEADERS = {
