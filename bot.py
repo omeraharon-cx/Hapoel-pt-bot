@@ -117,7 +117,11 @@ def extract_article_data(url):
         og_image = soup.find("meta", property="og:image")
         if og_image: image = og_image["content"]
         
-        # זיהוי תוכן משופר (במיוחד לספורט 5)
+        # סינון תמונות לוגו של גוגל ניוז
+        if image and ("googleusercontent" in image or "google.com/logos" in image):
+            image = None
+
+        # זיהוי תוכן משופר (במיוחד לספורט 5 וספורט 1)
         container = (
             soup.find('div', class_='article-body') or 
             soup.find('div', class_='article-content') or
@@ -247,10 +251,12 @@ def main():
                         prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
                         # שינוי ההנחיה למניעת SKIP - הבוט הופך לתשתיתי ומכיל הכל
-                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP אם הכתבה עוסקת באופן ישיר במועדון, בשחקנים (כולל שמועות ומו\"מ) או בהכנות למשחקים. האוהדים רוצים לדעת הכל.\n\n" + f"טקסט: {content[:2500]}")
+                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP בשום פנים ואופן אם הכתבה עוסקת בהפועל פתח תקווה, שחקניה, או מו\"מ - גם אם המידע קצר או שמועתי. אם אין שום מידע רלוונטי בכלל, החזר 'EMPTY'.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
-                    if summary and ("SKIP" not in summary.upper() or is_official):
+                    
+                    # בדיקת איכות: אם ה-AI החזיר תקציר הגיוני ולא שגיאה או EMPTY - נשלח
+                    if summary and "SKIP" not in summary.upper() and "EMPTY" not in summary.upper() and len(summary) > 25 and "Waiting for text" not in summary:
                         dup_p = f"האם הכותרת היא כפילות? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
@@ -266,7 +272,7 @@ def main():
                                 print(f"DEBUG: נשלח בהצלחה: {entry.title}", flush=True)
                                 time.sleep(10)
                         else: print(f"DEBUG: כפילות נושא זוהתה: {entry.title}", flush=True)
-                    else: print(f"DEBUG: ה-AI החליט לדלג: {entry.title}", flush=True)
+                    else: print(f"DEBUG: ה-AI החליט לדלג או שהטקסט לא הספיק: {entry.title}", flush=True)
                 else: print(f"DEBUG: מילות מפתח לא נמצאו: {entry.title}", flush=True)
         except Exception as e: print(f"DEBUG RSS ERROR: {feed_url} - {e}", flush=True)
 
