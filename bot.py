@@ -142,7 +142,7 @@ def main():
 
     # וידוא קבצים
     for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt"]:
-        if not os.path.exists(f): open(f, 'a', encoding='utf-8').close()
+        if not os.path.exists(f): open(f, 'a').close()
     
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = f.read()
@@ -246,12 +246,12 @@ def main():
                     if is_official:
                         prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        # שינוי ההנחיה למניעת SKIP על ידיעות שחקנים
-                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוק: אל תתחיל ב'כן/נו'. תמיד תזכיר את 'הפועל'. אל תעשה SKIP לידיעות על שחקנים (כולל מו\"מ, אימונים, פציעות או סתם עדכונים) - הכל חשוב.\n\n" + f"טקסט: {content[:2500]}")
+                        # שינוי ההנחיה למניעת SKIP - הבוט הופך לתשתיתי ומכיל הכל
+                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP אם הכתבה עוסקת באופן ישיר במועדון, בשחקנים (כולל שמועות ומו\"מ) או בהכנות למשחקים. האוהדים רוצים לדעת הכל.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
                     if summary and ("SKIP" not in summary.upper() or is_official):
-                        dup_p = f"האם זו כפילות של: {recent_sums[-800:]}?\nחדש: {entry.title}. ענה YES/NO."
+                        dup_p = f"האם הכותרת היא כפילות? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
                             success = False
