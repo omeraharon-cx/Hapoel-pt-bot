@@ -161,12 +161,12 @@ def main():
     print(f"DEBUG: בודק API למשחקים (TEAM_ID: {TEAM_ID})...", flush=True)
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
-        # בודקים את 5 המשחקים הבאים כדי לוודא שאנחנו לא מפספסים את המשחק של היום
-        r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/5", headers=headers_api, timeout=15).json()
+        # הגדלנו ל-10 משחקים כדי לוודא שמשחק שהתחיל או עומד להתחיל לא ייעלם
+        r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/10", headers=headers_api, timeout=15).json()
         events = r_next.get('events', [])
         
         if not events:
-            print("DEBUG: API לא החזיר משחקים עתידיים ברשימה.", flush=True)
+            print(f"DEBUG: API חזר ריק. תשובה מלאה: {r_next}", flush=True)
         
         found_game_today = False
         for ev in events:
@@ -178,7 +178,7 @@ def main():
                 opp = ev['awayTeam']['name'] if str(ev['homeTeam']['id']) == TEAM_ID else ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
                 
-                # פוסטר בוקר (נוסח מרגש)
+                # פוסטר בוקר
                 if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
                     md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
                                f"יאללה הפועל, לתת הכל בשביל הסמל!\nמלחמה היום הפועלללל 🚀\n\n"
@@ -187,7 +187,7 @@ def main():
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
                         print("DEBUG: הודעת MatchDay נשלחה.", flush=True)
 
-                # סקר הימורים (שאלה מעודכנת)
+                # סקר הימורים
                 if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
                     if send_telegram(None, "sendPoll", {"question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
@@ -240,23 +240,19 @@ def main():
             for entry in feed.entries[:45]:
                 if processed_count >= 5: break
                 
-                # בדיקת תאריך: אם הכתבה ישנה יותר מ-7 ימים, נדלג
-                pub_date = None
-                if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    pub_date = datetime(*entry.published_parsed[:6])
-                if pub_date and (now_il - pub_date) > timedelta(days=7):
-                    continue
+                pub_date = datetime(*entry.published_parsed[:6]) if hasattr(entry, 'published_parsed') and entry.published_parsed else None
+                if pub_date and (now_il - pub_date) > timedelta(days=7): continue
 
                 print(f"DEBUG: בודק כתבה: {entry.title}", flush=True)
                 raw_link = entry.link.replace("https://svcamz.", "https://www.")
                 content, image, final_link = extract_article_data(raw_link)
                 clean_link = final_link.split('?')[0] if "sport5" not in final_link and "hapoelpt" not in final_link else final_link
                 
-                # חסימת מקורות לא רצויים מגוגל ניוז
+                # חסימת מקורות לא מורשים מגוגל ניוז
                 if "google" in feed_url:
-                    allowed_sites = ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il", "maariv.co.il"]
-                    if not any(site in clean_link for site in allowed_sites):
-                        print(f"DEBUG: מקור לא מאושר מגוגל, מדלג: {clean_link}", flush=True)
+                    allowed = ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il", "maariv.co.il"]
+                    if not any(s in clean_link for s in allowed):
+                        print(f"DEBUG: מקור לא מורשה מגוגל, מדלג: {clean_link}", flush=True)
                         continue
 
                 if clean_link in history:
@@ -281,10 +277,7 @@ def main():
                         dup_p = f"האם הידיעה הזו מדווחת על אותו נושא בדיוק כמו באלו? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
-                            success = False
-                            if image: success = send_telegram(None, "sendPhoto", {"photo": image, "caption": full_msg})
-                            if not success: success = send_telegram(full_msg)
-                            if success:
+                            if (send_telegram(None, "sendPhoto", {"photo": image, "caption": full_msg}) if image else send_telegram(full_msg)):
                                 history.add(clean_link)
                                 with open("seen_links.txt", 'a', encoding='utf-8') as f: f.write(clean_link + "\n")
                                 with open("recent_summaries.txt", 'a', encoding='utf-8') as f: f.write(summary + "|||")
