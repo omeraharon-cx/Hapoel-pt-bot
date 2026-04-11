@@ -161,36 +161,40 @@ def main():
     print(f"DEBUG: בודק API למשחקים (TEAM_ID: {TEAM_ID})...", flush=True)
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     try:
-        r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/0", headers=headers_api, timeout=15).json()
-        if r_next.get('events'):
-            next_ev = r_next['events'][0]
-            game_date = (datetime.fromtimestamp(next_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
-            print(f"DEBUG: משחק קרוב ב-API בתאריך: {game_date} (היום: {today_str})", flush=True)
+        # בודקים את 5 המשחקים הבאים כדי לוודא שאנחנו לא מפספסים את המשחק של היום
+        r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/5", headers=headers_api, timeout=15).json()
+        events = r_next.get('events', [])
+        
+        if not events:
+            print("DEBUG: API לא החזיר משחקים עתידיים ברשימה.", flush=True)
+        
+        found_game_today = False
+        for ev in events:
+            game_date = (datetime.fromtimestamp(ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
+            print(f"DEBUG: נמצא משחק ב-API בתאריך {game_date} נגד {ev['awayTeam']['name'] if str(ev['homeTeam']['id']) == TEAM_ID else ev['homeTeam']['name']}", flush=True)
             
             if game_date == today_str:
-                opp = next_ev['awayTeam']['name'] if str(next_ev['homeTeam']['id']) == TEAM_ID else next_ev['homeTeam']['name']
+                found_game_today = True
+                opp = ev['awayTeam']['name'] if str(ev['homeTeam']['id']) == TEAM_ID else ev['homeTeam']['name']
                 opp_heb = TEAM_TRANSLATION.get(opp, opp)
                 
                 # פוסטר בוקר (נוסח מרגש)
                 if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
-                    md_text = (
-                        f"MatchDay Hapoel 💙\n"
-                        f"הפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
-                        f"יאללה הפועל, לתת הכל בשביל הסמל!\n"
-                        f"מלחמה היום הפועלללל 🚀\n\n"
-                        f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
-                        f"הפועל עולה עולההה, הפועל, הפועל עולהה 💙"
-                    )
+                    md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
+                               f"יאללה הפועל, לתת הכל בשביל הסמל!\nמלחמה היום הפועלללל 🚀\n\n"
+                               f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\nהפועל עולה עולההה, הפועל, הפועל עולהה 💙")
                     if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
                         print("DEBUG: הודעת MatchDay נשלחה.", flush=True)
 
                 # סקר הימורים (שאלה מעודכנת)
                 if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
-                    if send_telegram(None, "sendPoll", {"poll_id": None, "question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
+                    if send_telegram(None, "sendPoll", {"question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
-        else:
-            print("DEBUG: API לא החזיר משחקים עתידיים.", flush=True)
+                break
+        
+        if not found_game_today:
+            print(f"DEBUG: לא נמצא משחק להיום ({today_str}) ברשימת ה-API.", flush=True)
 
         # 3. תוצאת סיום וסקר MVP
         r_last = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers_api, timeout=15).json()
@@ -213,7 +217,6 @@ def main():
                     if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
                         with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
                     
-                    # סקר MVP (שאלה מעודכנת)
                     if f"mvp_{today_str}" not in tasks:
                         players = []
                         try:
@@ -241,7 +244,6 @@ def main():
                 pub_date = None
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     pub_date = datetime(*entry.published_parsed[:6])
-                
                 if pub_date and (now_il - pub_date) > timedelta(days=7):
                     continue
 
@@ -250,6 +252,13 @@ def main():
                 content, image, final_link = extract_article_data(raw_link)
                 clean_link = final_link.split('?')[0] if "sport5" not in final_link and "hapoelpt" not in final_link else final_link
                 
+                # חסימת מקורות לא רצויים מגוגל ניוז
+                if "google" in feed_url:
+                    allowed_sites = ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il", "maariv.co.il"]
+                    if not any(site in clean_link for site in allowed_sites):
+                        print(f"DEBUG: מקור לא מאושר מגוגל, מדלג: {clean_link}", flush=True)
+                        continue
+
                 if clean_link in history:
                     print(f"DEBUG: כבר נשלח בעבר: {entry.title}", flush=True)
                     continue
@@ -261,8 +270,7 @@ def main():
                     if is_official:
                         prompt = ("סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        # שיפור פילטר הריכוז: סינון כתבות שאינן מתמקדות בהפועל פ"ת
-                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP אם הכתבה עוסקת בהפועל פתח תקווה, שחקניה, או מו\"מ. 4. חשוב: אם הכתבה עוסקת ברובה בקבוצה אחרת והפועל רק מוזכרת בדרך אגב (למשל כתבה על שחקן של הפועל ת״א), החזר 'SKIP'.\n\n" + f"טקסט: {content[:2500]}")
+                        prompt = ("תקצר את הכתבה ב-3 משפטים עיתונאיים חדים. חוקים: 1. התחל ישר במידע. 2. תמיד תזכיר את 'הפועל'. 3. אל תחזיר SKIP אם הכתבה עוסקת בהפועל פתח תקווה. 4. חשוב: אם הכתבה עוסקת ברובה בקבוצה אחרת והפועל רק מוזכרת בדרך אגב (למשל כתבה על שחקן של הפועל ת״א), החזר 'SKIP'.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
                     if (not summary or "SKIP" in summary.upper() or "EMPTY" in summary.upper()) and any(k.lower() in entry.title.lower() for k in HAPOEL_KEYS) and not is_official:
@@ -270,7 +278,6 @@ def main():
                          else: summary = entry.title
 
                     if summary and "SKIP" not in summary.upper() and len(summary) > 10 and "Waiting for text" not in summary:
-                        # שיפור פילטר המסר: מניעת כפילויות תוכן מאתרים שונים על ידי השוואה לסיכומים קודמים
                         dup_p = f"האם הידיעה הזו מדווחת על אותו נושא בדיוק כמו באלו? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if is_official or "YES" not in (get_ai_response(dup_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_link})"
