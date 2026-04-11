@@ -50,6 +50,13 @@ WIN_CHANTS = [
     "מי שלא קופץ לוזון, מי שלא קופץ לוזון! 💙"
 ]
 
+# --- לוח משחקים ידני (גיבוי למקרה שהמכסה נגמרת) ---
+BACKUP_SCHEDULE = {
+    "2026-04-11": "הפועל תל אביב",
+    "2026-04-18": "מכבי פתח תקווה",
+    "2026-04-25": "בני סכנין"
+}
+
 # --- תרגום קבוצות ליגת העל 2026 ---
 TEAM_TRANSLATION = {
     "Maccabi Haifa": "מכבי חיפה", "Maccabi Tel Aviv": "מכבי תל אביב", 
@@ -140,11 +147,13 @@ def extract_article_data(url):
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
+    current_week = now_il.strftime('%Y-%U') # שנה ומספר שבוע לצורך עדכון לוח
     print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} ---", flush=True)
 
     # וידוא קבצים
-    for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt"]:
-        if not os.path.exists(f): open(f, 'a', encoding='utf-8').close()
+    for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt", "schedule.json"]:
+        if not os.path.exists(f): 
+            with open(f, 'a', encoding='utf-8') as open_f: pass
     
     with open("seen_links.txt", 'r', encoding='utf-8') as f: history = set(line.strip() for line in f)
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = f.read()
@@ -157,80 +166,73 @@ def main():
             if send_telegram(f"📜 *פינת ההיסטוריה הכחולה:*\n\n{fact}"):
                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
-    # 2. ניהול יום משחק (RapidAPI)
-    print(f"DEBUG: בודק API למשחקים (TEAM_ID: {TEAM_ID})...", flush=True)
+    # 2. ניהול לוח משחקים (חיסכון בקריאות API - עדכון שבועי)
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
+    local_schedule = {}
     try:
-        # הגדלנו ל-10 משחקים כדי לוודא שמשחק שהתחיל או עומד להתחיל לא ייעלם
-        r_next = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/10", headers=headers_api, timeout=15).json()
-        events = r_next.get('events', [])
-        
-        if not events:
-            print(f"DEBUG: API חזר ריק. תשובה מלאה: {r_next}", flush=True)
-        
-        found_game_today = False
-        for ev in events:
-            game_date = (datetime.fromtimestamp(ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
-            print(f"DEBUG: נמצא משחק ב-API בתאריך {game_date} נגד {ev['awayTeam']['name'] if str(ev['homeTeam']['id']) == TEAM_ID else ev['homeTeam']['name']}", flush=True)
-            
-            if game_date == today_str:
-                found_game_today = True
-                opp = ev['awayTeam']['name'] if str(ev['homeTeam']['id']) == TEAM_ID else ev['homeTeam']['name']
-                opp_heb = TEAM_TRANSLATION.get(opp, opp)
-                
-                # פוסטר בוקר
-                if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
-                    md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
-                               f"יאללה הפועל, לתת הכל בשביל הסמל!\nמלחמה היום הפועלללל 🚀\n\n"
-                               f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\nהפועל עולה עולההה, הפועל, הפועל עולהה 💙")
-                    if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
-                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
-                        print("DEBUG: הודעת MatchDay נשלחה.", flush=True)
+        # קריאת לוח משחקים מהקובץ המקומי
+        if os.path.exists("schedule.json") and os.path.getsize("schedule.json") > 0:
+            with open("schedule.json", 'r', encoding='utf-8') as f: local_schedule = json.load(f)
 
-                # סקר הימורים
-                if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
-                    if send_telegram(None, "sendPoll", {"question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
-                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
-                break
-        
-        if not found_game_today:
-            print(f"DEBUG: לא נמצא משחק להיום ({today_str}) ברשימת ה-API.", flush=True)
+        # עדכון הלוח רק פעם בשבוע או אם הוא ריק לגמרי
+        if f"sched_update_{current_week}" not in tasks or not local_schedule:
+            print("DEBUG: מעדכן לוח משחקים שבועי מה-API...", flush=True)
+            r_sched = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/10", headers=headers_api, timeout=15).json()
+            if 'events' in r_sched:
+                new_sched = {}
+                for ev in r_sched['events']:
+                    d = (datetime.fromtimestamp(ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
+                    opp_n = ev['awayTeam']['name'] if str(ev['homeTeam']['id']) == TEAM_ID else ev['homeTeam']['name']
+                    new_sched[d] = TEAM_TRANSLATION.get(opp_n, opp_n)
+                with open("schedule.json", 'w', encoding='utf-8') as f: json.dump(new_sched, f)
+                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"sched_update_{current_week}\n")
+                local_schedule = new_sched
+            else:
+                print(f"DEBUG: API חסום (מכסה). משתמש בלוח גיבוי ידני.", flush=True)
+                local_schedule.update(BACKUP_SCHEDULE)
+    except Exception as e: print(f"DEBUG SCHED ERROR: {e}", flush=True)
 
-        # 3. תוצאת סיום וסקר MVP
-        r_last = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers_api, timeout=15).json()
-        if r_last.get('events'):
-            last_ev = r_last['events'][0]
-            if (datetime.fromtimestamp(last_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d') == today_str:
-                if f"final_{today_str}" not in tasks and last_ev.get('status', {}).get('type') in ['finished', 'FT']:
-                    is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
-                    my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
-                    opp_heb = TEAM_TRANSLATION.get(last_ev['awayTeam']['name'] if is_h else last_ev['homeTeam']['name'], "היריבה")
-                    
-                    if my > opp_s:
-                        res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} (תוצאה: {my}-{opp_s})\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
-                    elif my == opp_s:
-                        res_txt = f"תיקו {my}-{opp_s} בסיום המשחק. ממשיכים הלאה. יאללה הפועלללל 💙"
-                    else:
-                        res_txt = f"הפסד {my}-{opp_s} בסיום המשחק. מרימים את הראש וממשיכים הלאה. יאללה הפועל מלחמה 💙"
-                    
-                    markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}
-                    if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
-                        with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
-                    
-                    if f"mvp_{today_str}" not in tasks:
-                        players = []
-                        try:
-                            r_l = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/event/{last_ev['id']}/lineups", headers=headers_api, timeout=15).json()
-                            players = [PLAYER_MAP.get(p['player']['name'], p['player']['name']) for p in r_l['home' if is_h else 'away']['players']]
-                        except: pass
-                        if not players: players = DEFAULT_PLAYERS
-                        if send_telegram(None, "sendPoll", {"question": "מי היה ה-MVP של המשחק לדעתך?", "options": players[:10], "is_anonymous": False}):
-                            with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
-    except Exception as e: print(f"DEBUG MATCH ERROR: {e}", flush=True)
+    # 3. ניהול יום משחק (מבוסס לוח מקומי)
+    if today_str in local_schedule:
+        opp_heb = local_schedule[today_str]
+        print(f"DEBUG: היום יש משחק נגד {opp_heb}!", flush=True)
+
+        # פוסטר בוקר (נוסח מרגש)
+        if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
+            md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה בעוד מספר שעות לכר הדשא לשחק נגד *{opp_heb}*.\n"
+                       f"יאללה הפועל, לתת הכל בשביל הסמל!\nמלחמה היום הפועלללל 🚀\n\n"
+                       f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\nהפועל עולה עולההה, הפועל, הפועל עולהה 💙")
+            if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
+                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
+
+        # סקר הימורים
+        if now_il.hour >= 15 and f"betting_{today_str}" not in tasks:
+            if send_telegram(None, "sendPoll", {"question": "זמן להמר, מי תנצח היום?", "options": ["ניצחון כחול 💙", "תיקו", "הפסד 💔"], "is_anonymous": False}):
+                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"betting_{today_str}\n")
+
+        # תוצאת סיום וסקר MVP (פונים ל-API רק בשעות המשחק כדי לחסוך)
+        if now_il.hour >= 18 and f"final_{today_str}" not in tasks:
+            try:
+                r_last = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0", headers=headers_api, timeout=15).json()
+                if r_last.get('events'):
+                    last_ev = r_last['events'][0]
+                    if (datetime.fromtimestamp(last_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d') == today_str:
+                        if last_ev.get('status', {}).get('type') in ['finished', 'FT']:
+                            is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
+                            my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
+                            if my > opp_s: res_txt = f"{random.choice(WIN_CHANTS)}\n\n*איזההה נצחון של הפועלללל!*\nיוצאים עם 3 נקודות נגד {opp_heb} (תוצאה: {my}-{opp_s})\nכל הכבוד הפועל, לתת הכל בשביל הסמל 💙"
+                            elif my == opp_s: res_txt = f"תיקו {my}-{opp_s} בסיום המשחק. ממשיכים הלאה. יאללה הפועלללל 💙"
+                            else: res_txt = f"הפסד {my}-{opp_s} בסיום המשחק. מרימים את הראש וממשיכים הלאה. יאללה הפועל מלחמה 💙"
+                            if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}}):
+                                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
+                            if f"mvp_{today_str}" not in tasks:
+                                send_telegram(None, "sendPoll", {"question": "מי היה ה-MVP של המשחק לדעתך?", "options": DEFAULT_PLAYERS[:10], "is_anonymous": False})
+                                with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
+            except Exception as e: print(f"DEBUG MATCH ERROR: {e}", flush=True)
 
     # 4. סריקת כתבות RSS (עד 5 לריצה)
     processed_count = 0
-    print("DEBUG: מתחיל סריקה...", flush=True)
+    print("DEBUG: מתחיל סריקת כתבות...", flush=True)
     for feed_url in RSS_FEEDS:
         if processed_count >= 5: break
         print(f"DEBUG: סורק פיד: {feed_url}", flush=True)
@@ -239,7 +241,6 @@ def main():
             feed = feedparser.parse(resp.content)
             for entry in feed.entries[:45]:
                 if processed_count >= 5: break
-                
                 pub_date = datetime(*entry.published_parsed[:6]) if hasattr(entry, 'published_parsed') and entry.published_parsed else None
                 if pub_date and (now_il - pub_date) > timedelta(days=7): continue
 
@@ -284,9 +285,6 @@ def main():
                                 processed_count += 1
                                 print(f"DEBUG: נשלח בהצלחה: {entry.title}", flush=True)
                                 time.sleep(10)
-                        else: print(f"DEBUG: כפילות תוכן זוהתה: {entry.title}", flush=True)
-                    else: print(f"DEBUG: ה-AI החליט לדלג או שהטקסט לא הספיק: {entry.title}", flush=True)
-                else: print(f"DEBUG: מילות מפתח לא נמצאו: {entry.title}", flush=True)
         except Exception as e: print(f"DEBUG RSS ERROR: {feed_url} - {e}", flush=True)
 
     print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---", flush=True)
