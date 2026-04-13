@@ -21,10 +21,10 @@ RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
 # --- הגדרות סביבת עבודה (Toggle) ---
-# שנה ל-True כדי לשלוח לכל המנויים ב-subscribers.txt | שנה ל-False לשליחה לאדמין בלבד (סביבת בדיקות)
+# שנה ל-True כדי לשלוח לכל המנויים ב-subscribers.txt | שנה ל-False לשליחה לאדמין בלבד (טסטים)
 BROADCAST_MODE = False 
 
-# --- סגל שחקנים (10 שחקנים מעודכן - בלי רז ורם, עם נועם, בוני ודיארה) ---
+# --- סגל שחקנים (מעודכן לפי 365Scores) ---
 DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד", "קוסטה", "שביט מזל", "נועם כהן", "בוני", "דיארה"]
 
 PLAYER_MAP = { 
@@ -34,7 +34,7 @@ PLAYER_MAP = {
     "Andrade Euclides Claye": "קליי", "Chipuoka Songa": "סונגה", "Tomer Altman": "אלטמן", 
     "Dror Nir": "דרור ניר", "Shahar Rosen": "שחר רוזן", "Idan Cohen": "עידן כהן",
     "Noam Cohen": "נועם כהן", "Boni Amanis": "בוני", "Fortune Diarra": "דיארה",
-    "Matan Gosha": "מתן גושה"
+    "Matan Gosha": "מתן גושה", "Yarin Levi": "ירין לוי", "Daniel Joulani": "דניאל גולאני"
 }
 
 # --- מאגר פוסטרים (6) ---
@@ -54,12 +54,19 @@ WIN_CHANTS = [
     "מי שלא קופץ לוזון, מי שלא קופץ לוזון! 💙"
 ]
 
-# --- לוח משחקים ידני מעודכן (גיבוי למקרה שהמכסה נגמרת) ---
+# --- לוח משחקים ידני מלא (לפי התמונה והקישור ששלחת) ---
 # פורמט: "YYYY-MM-DD": "שם היריבה"
 BACKUP_SCHEDULE = {
     "2026-04-18": "הפועל באר שבע",
     "2026-04-22": "הפועל תל אביב",
-    "2026-04-25": "בית\"ר ירושלים"
+    "2026-04-25": "בית\"ר ירושלים",
+    "2026-05-02": "מכבי חיפה",
+    "2026-05-05": "מכבי תל אביב",
+    "2026-05-09": "הפועל באר שבע",
+    "2026-05-13": "הפועל תל אביב",
+    "2026-05-16": "מכבי חיפה",
+    "2026-05-20": "בית\"ר ירושלים",
+    "2026-05-23": "מכבי תל אביב"
 }
 
 # --- תרגום קבוצות ליגת העל 2026 ---
@@ -96,7 +103,7 @@ def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def send_telegram(text, method="sendMessage", payload=None):
-    # הגדרת רשימת הנמענים לפי ה-Toggle
+    # הגדרת רשימת נמענים לפי ה-Toggle
     recipients = [ADMIN_ID]
     if BROADCAST_MODE and os.path.exists("subscribers.txt"):
         with open("subscribers.txt", "r", encoding='utf-8') as f:
@@ -104,7 +111,7 @@ def send_telegram(text, method="sendMessage", payload=None):
     
     recipients = list(set(recipients)) # ניקוי כפילויות
     
-    overall_status = True
+    overall_success = True
     for chat_id in recipients:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
         current_payload = payload.copy() if payload else {}
@@ -117,15 +124,15 @@ def send_telegram(text, method="sendMessage", payload=None):
             
         try:
             r = requests.post(url, json=current_payload, timeout=25)
-            if r.status_code != 200: overall_status = False
+            if r.status_code != 200: overall_success = False
         except:
-            overall_status = False
+            overall_success = False
             
-    return overall_status
+    return overall_success
 
 def get_ai_response(prompt):
     if not GEMINI_API_KEY: return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
@@ -165,7 +172,7 @@ def extract_article_data(url):
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
-    current_week = now_il.strftime('%Y-%U') # עדכון שבועי
+    current_week = now_il.strftime('%Y-%U') # זיהוי השבוע בשנה לצורך עדכון לוח
     print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} ---", flush=True)
 
     # וידוא קבצים
@@ -192,7 +199,7 @@ def main():
             with open("schedule.json", 'r', encoding='utf-8') as f: local_schedule = json.load(f)
 
         if f"sched_update_{current_week}" not in tasks or not local_schedule:
-            print("DEBUG: מנסה לעדכן לוח משחקים מה-API...", flush=True)
+            print("DEBUG: מנסה לעדכן לוח משחקים שבועי מה-API...", flush=True)
             r_sched = requests.get(f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/10", headers=headers_api, timeout=15).json()
             if 'events' in r_sched:
                 new_sched = {}
@@ -203,8 +210,9 @@ def main():
                 with open("schedule.json", 'w', encoding='utf-8') as f: json.dump(new_sched, f)
                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"sched_update_{current_week}\n")
                 local_schedule = new_sched
+                print("DEBUG: הלוח התעדכן מה-API.", flush=True)
             else:
-                print("DEBUG: API חסום, משתמש בלוח גיבוי ידני.", flush=True)
+                print("DEBUG: API לא זמין, משתמש בלוח גיבוי ידני.", flush=True)
                 local_schedule.update(BACKUP_SCHEDULE)
     except: local_schedule.update(BACKUP_SCHEDULE)
 
@@ -214,10 +222,8 @@ def main():
         print(f"DEBUG: היום יש משחק נגד {opp_heb}!", flush=True)
 
         if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
-            md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה בעוד מספר שעות לכר הדשא נגד *{opp_heb}*.\n"
-                       f"יאללה הפועל, לתת הכל בשביל הסמל!\nמלחמה היום הפועלללל 🚀\n\n"
-                       f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
-                       f"הפועל עולה עולההה, הפועל, הפועל עולהה 💙")
+            md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה היום נגד *{opp_heb}*.\n"
+                       f"יאללה הפועל, לתת הכל בשביל הסמל! 🚀\n\nהפועל עולה עולההה 💙")
             if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
 
@@ -234,13 +240,13 @@ def main():
                         if last_ev.get('status', {}).get('type') in ['finished', 'FT']:
                             is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
                             my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
-                            res_txt = f"סיום המשחק: {my}-{opp_s} נגד {opp_heb}. יאללה הפועל! 💙"
-                            if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}}):
+                            res_t = f"סיום המשחק: {my}-{opp_s} נגד {opp_heb}. יאללה הפועל! 💙"
+                            if send_telegram(res_t, payload={"text": res_t, "reply_markup": {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}}):
                                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
                                 if f"mvp_{today_str}" not in tasks:
                                     send_telegram(None, "sendPoll", {"question": "מי ה-MVP של המשחק לדעתך?", "options": DEFAULT_PLAYERS[:10], "is_anonymous": False})
                                     with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
-            except: pass
+            except Exception as e: print(f"DEBUG LIVE ERROR: {e}", flush=True)
 
     # 4. סריקת כתבות RSS
     processed_count = 0
@@ -257,7 +263,7 @@ def main():
                 if pub_parsed and (now_il - datetime(*pub_parsed[:6])) > timedelta(days=7): continue
 
                 content, image, final_link = extract_article_data(raw_link := entry.link.replace("https://svcamz.", "https://www."))
-                # שיפור: שמירה על פרמטרים בכתבות ספורט 5 והאתר הרשמי
+                # שיפור: שמירה על פרמטרים בכתבות ספורט 5 והאתר הרשמי לצורך זיהוי docID
                 clean_link = final_link if any(s in final_link for s in ["sport5.co.il", "hapoelpt.com"]) else final_link.split('?')[0]
                 
                 if "google" in feed_url:
@@ -271,7 +277,7 @@ def main():
                     if is_official:
                         prompt = ("סכם ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        # שיפור הטון והאזכור של הפועל
+                        # שיפור הטון העיתונאי והאזכור של הפועל
                         prompt = ("כתוב תקציר עיתונאי של 3-4 משפטים על הפועל פתח תקווה. הטון צריך להיות מעניין ומקצועי. חובה להזכיר את 'הפועל'. אם הכתבה ברובה על קבוצה אחרת, החזר 'SKIP'.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
