@@ -22,7 +22,7 @@ ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=2
 
 # --- הגדרות סביבת עבודה (Toggle) ---
 # שנה ל-True כדי לשלוח לכל המנויים ב-subscribers.txt | שנה ל-False לשליחה לאדמין בלבד (טסטים)
-BROADCAST_MODE = False 
+BROADCAST_MODE = True 
 
 # --- סגל שחקנים (מעודכן לפי 365Scores) ---
 DEFAULT_PLAYERS = ["עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד", "קוסטה", "שביט מזל", "נועם כהן", "בוני", "דיארה"]
