@@ -54,7 +54,7 @@ WIN_CHANTS = [
     "מי שלא קופץ לוזון, מי שלא קופץ לוזון! 💙"
 ]
 
-# --- לוח משחקים ידני מלא (לפי התמונה והקישור ששלחת) ---
+# --- לוח משחקים ידני מלא (מעודכן לפי התמונה ששלחת) ---
 # פורמט: "YYYY-MM-DD": "שם היריבה"
 BACKUP_SCHEDULE = {
     "2026-04-18": "הפועל באר שבע",
@@ -87,10 +87,10 @@ HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "ה
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
     "https://news.google.com/rss/search?q=הפועל+פתח+תקווה&hl=he&gl=IL&ceid=IL:he",
-    "https://rss.walla.co.il/feed/3", # מדור ספורט וואלה (עודכן מ-7 ל-3)
+    "https://rss.walla.co.il/feed/3", # מדור ספורט וואלה
     "https://www.one.co.il/cat/rss/",
     "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64",
-    "https://www.ynet.co.il/Integration/StoryRss3.xml" # מדור ספורט ynet (עודכן מ-2 ל-3)
+    "https://www.ynet.co.il/Integration/StoryRss3.xml" # מדור ספורט ynet
 ]
 
 RSS_HEADERS = {
@@ -111,7 +111,7 @@ def send_telegram(text, method="sendMessage", payload=None):
     
     recipients = list(set(recipients)) # ניקוי כפילויות
     
-    overall_success = True
+    overall_status = True
     for chat_id in recipients:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
         current_payload = payload.copy() if payload else {}
@@ -124,11 +124,11 @@ def send_telegram(text, method="sendMessage", payload=None):
             
         try:
             r = requests.post(url, json=current_payload, timeout=25)
-            if r.status_code != 200: overall_success = False
+            if r.status_code != 200: overall_status = False
         except:
-            overall_success = False
+            overall_status = False
             
-    return overall_success
+    return overall_status
 
 def get_ai_response(prompt):
     if not GEMINI_API_KEY: return None
@@ -172,7 +172,7 @@ def extract_article_data(url):
 def main():
     now_il = get_israel_time()
     today_str = now_il.strftime('%Y-%m-%d')
-    current_week = now_il.strftime('%Y-%U') # זיהוי השבוע בשנה לצורך עדכון לוח
+    current_week = now_il.strftime('%Y-%U') # עדכון שבועי
     print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} ---", flush=True)
 
     # וידוא קבצים
@@ -212,7 +212,7 @@ def main():
                 local_schedule = new_sched
                 print("DEBUG: הלוח התעדכן מה-API.", flush=True)
             else:
-                print("DEBUG: API לא זמין, משתמש בלוח גיבוי ידני.", flush=True)
+                print("DEBUG: API חסום, משתמש בלוח גיבוי ידני.", flush=True)
                 local_schedule.update(BACKUP_SCHEDULE)
     except: local_schedule.update(BACKUP_SCHEDULE)
 
@@ -240,13 +240,13 @@ def main():
                         if last_ev.get('status', {}).get('type') in ['finished', 'FT']:
                             is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
                             my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
-                            res_t = f"סיום המשחק: {my}-{opp_s} נגד {opp_heb}. יאללה הפועל! 💙"
-                            if send_telegram(res_t, payload={"text": res_t, "reply_markup": {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}}):
+                            res_txt = f"סיום המשחק: {my}-{opp_s} נגד {opp_heb}. יאללה הפועל! 💙"
+                            if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": {"inline_keyboard": [[{"text": "📊 לטבלת הליגה (ONE)", "url": ONE_TABLE_URL}]]}}):
                                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
                                 if f"mvp_{today_str}" not in tasks:
                                     send_telegram(None, "sendPoll", {"question": "מי ה-MVP של המשחק לדעתך?", "options": DEFAULT_PLAYERS[:10], "is_anonymous": False})
                                     with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
-            except Exception as e: print(f"DEBUG LIVE ERROR: {e}", flush=True)
+            except Exception as e: print(f"DEBUG MATCH LIVE ERROR: {e}", flush=True)
 
     # 4. סריקת כתבות RSS
     processed_count = 0
@@ -263,11 +263,14 @@ def main():
                 if pub_parsed and (now_il - datetime(*pub_parsed[:6])) > timedelta(days=7): continue
 
                 content, image, final_link = extract_article_data(raw_link := entry.link.replace("https://svcamz.", "https://www."))
-                # שיפור: שמירה על פרמטרים בכתבות ספורט 5 והאתר הרשמי לצורך זיהוי docID
-                clean_link = final_link if any(s in final_link for s in ["sport5.co.il", "hapoelpt.com"]) else final_link.split('?')[0]
                 
+                # תיקון: שמירה על docID גם בספורט 1 (maariv) וגם בספורט 5
+                clean_link = final_link if any(s in final_link for s in ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il", "hapoelpt.com"]) else final_link.split('?')[0]
+                
+                # סינון גוגל ניוז: קבלת כתבות רק מספורט 5 וספורט 1 (השאר יגיעו מהפידים הישירים שלהם)
                 if "google" in feed_url:
-                    if not any(s in clean_link for s in ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il", "maariv.co.il"]): continue
+                    if not any(s in clean_link for s in ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il"]):
+                        continue
 
                 if clean_link in history: continue
                 if not content: content = entry.title
@@ -277,8 +280,8 @@ def main():
                     if is_official:
                         prompt = ("סכם ב-3 משפטים ענייניים. התחל ישר במידע.\n\n" + f"טקסט: {content[:3000]}")
                     else:
-                        # שיפור הטון העיתונאי והאזכור של הפועל
-                        prompt = ("כתוב תקציר עיתונאי של 3-4 משפטים על הפועל פתח תקווה. הטון צריך להיות מעניין ומקצועי. חובה להזכיר את 'הפועל'. אם הכתבה ברובה על קבוצה אחרת, החזר 'SKIP'.\n\n" + f"טקסט: {content[:2500]}")
+                        # שיפור הטון והאזכור של הפועל - דרישה ל-3-4 משפטים עיתונאיים
+                        prompt = ("כתוב תקציר עיתונאי של 3-4 משפטים על הפועל פתח תקווה. הטון צריך להיות מעניין, מקצועי וחד. חובה להזכיר את 'הפועל'. אל תחזיר SKIP אם מדובר בכתבה על הפועל פ\"ת.\n\n" + f"טקסט: {content[:2500]}")
                     
                     summary = get_ai_response(prompt)
                     if (not summary or "SKIP" in summary.upper()) and any(k.lower() in entry.title.lower() for k in HAPOEL_KEYS) and not is_official:
