@@ -170,8 +170,8 @@ def send_telegram(text, method="sendMessage", payload=None):
         
         if method in ["sendMessage", "sendPhoto"]:
             curr_payload["parse_mode"] = "Markdown"
-        if "text" not in current_payload and text:
-            current_payload["text"] = text
+        if "text" not in curr_payload and text:
+            curr_payload["text"] = text
             
         try:
             r = requests.post(url, json=curr_payload, timeout=25)
@@ -229,7 +229,7 @@ def main():
     current_week = now_il.strftime('%Y-%U')
     print(f"--- תחילת ריצה: {now_il.strftime('%H:%M:%S')} ---", flush=True)
 
-    # וידוא קבצי מערכת
+    # וידוא קבצים מערכת
     for f in ["seen_links.txt", "task_log.txt", "recent_summaries.txt", "schedule.json"]:
         if not os.path.exists(f): 
             open(f, 'a', encoding='utf-8').close()
