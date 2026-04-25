@@ -9,7 +9,8 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs, urlunparse
 
-# הגדרה שמכריחה את פייתון להוציא לוגים מיד (קריטי לראות לוגים ב-GitHub Actions בזמן אמת)
+# הגדרה שמכריחה את פייתון להוציא לוגים מיד
+# קריטי כדי שתוכל לראות בזמן אמת ב-GitHub Actions מה הבוט עושה
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- הגדרות ליבה (Secrets) ---
@@ -145,7 +146,7 @@ def clean_url(url):
             if "FolderID" in params: 
                 new_params["FolderID"] = params["FolderID"]
         elif "sport1.maariv.co.il" in url or "sport1.co.il" in url:
-            # המזהה נמצא בתוך נתיב הלינק, לכן נחזיר את הקישור ללא פרמטרים בכלל
+            # בספורט 1 המזהה נמצא בתוך נתיב הלינק, לכן נחזיר את הקישור ללא פרמטרים בכלל
             return url.split('?')[0]
         elif "hapoelpt.com" in url:
             return url # לא נוגעים בלינקים של האתר הרשמי
@@ -332,7 +333,7 @@ def main():
             feed = feedparser.parse(r_rss.content)
             
             if not feed.entries:
-                print(f"DEBUG: הפיד {feed_url} חזר ריק. ייתכן שיש חסימה.", flush=True)
+                if "google" not in feed_url: print(f"DEBUG: הפיד {feed_url} חזר ריק. ייתכן שיש חסימה.", flush=True)
                 continue
 
             for entry in feed.entries[:45]:
@@ -387,6 +388,8 @@ def main():
                                 time.sleep(10)
                         else:
                             print(f"DEBUG: כתבה על נושא שכבר דווח: {entry.title}", flush=True)
+                    else:
+                        print(f"DEBUG: AI החליט לדלג (SKIP) או תקציר קצר מדי: {entry.title}", flush=True)
                 else:
                     # הוספנו לוג למקרה שהכתבה פשוט לא רלוונטית
                     print(f"DEBUG: כתבה לא רלוונטית להפועל: {entry.title}", flush=True)
