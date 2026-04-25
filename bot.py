@@ -109,19 +109,20 @@ HAPOEL_KEYS = ["הפועל פתח תקווה", "הפועל פתח-תקוה", "ה
 RSS_FEEDS = [
     "https://www.hapoelpt.com/blog-feed.xml",
     "https://news.google.com/rss/search?q=הפועל+פתח+תקווה&hl=he&gl=IL&ceid=IL:he",
-    "https://rss.walla.co.il/feed/3", # מדור ספורט וואלה
+    "https://rss.walla.co.il/feed/2", # תוקן מ-3 (כסף) ל-2 (ספורט)
     "https://www.one.co.il/cat/rss/",
     "https://www.sport5.co.il/Public/Rss/Rss.aspx?FolderID=64",
     "https://www.ynet.co.il/Integration/StoryRss3.xml"
 ]
 
-# Headers משופרים למניעת חסימות מאתרי ספורט
+# Headers משופרים למניעת חסימות מאתרי ספורט (מחקים דפדפן מלא)
 RSS_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
+    'Connection': 'keep-alive',
+    'Referer': 'https://www.google.com/'
 }
 
 # --- פונקציות עזר ---
@@ -144,10 +145,9 @@ def clean_url(url):
             if "FolderID" in params: 
                 new_params["FolderID"] = params["FolderID"]
         elif "sport1.maariv.co.il" in url or "sport1.co.il" in url:
-            # בספורט 1 המזהה נמצא בתוך נתיב הלינק, לכן נחזיר את הקישור ללא פרמטרים
             return url.split('?')[0]
         elif "hapoelpt.com" in url:
-            return url # לא נוגעים בלינקים של האתר הרשמי
+            return url 
             
         if not new_params:
             return url.split('?')[0]
@@ -243,14 +243,14 @@ def main():
     with open("task_log.txt", 'r', encoding='utf-8') as f: tasks = f.read()
     with open("recent_summaries.txt", 'r', encoding='utf-8') as f: recent_sums = f.read()
 
-    # 1. פינת ההיסטוריה (יום רביעי בשעה 12:00)
+    # 1. פינת ההיסטוריה (רביעי ב-12:00)
     if now_il.weekday() == 2 and now_il.hour == 12 and f"history_{today_str}" not in tasks:
-        fact_prompt = "כתוב 2 עובדות היסטוריות קצרות ומעניינות על הפועל פתח תקווה. אחת משנות ה-50 ואחת משנות ה-90. הוסף אימוג'ים מתאימים."
+        fact_prompt = "כתוב 2 עובדות היסטוריות קצרות על הפועל פתח תקווה. אחת משנות ה-50 ואחת משנות ה-90. הוסף אימוג'ים."
         fact = get_ai_response(fact_prompt)
         if fact and send_telegram(f"📜 *פינת ההיסטוריה הכחולה:* \n\n{fact}"):
             with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"history_{today_str}\n")
 
-    # 2. ניהול לוח משחקים (עדכון מה-API לחיסכון במכסה)
+    # 2. ניהול לוח משחקים
     headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     local_schedule = {}
     try:
@@ -282,10 +282,7 @@ def main():
         print(f"DEBUG: היום יש משחק נגד {opp_heb}!", flush=True)
 
         if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
-            md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה היום נגד *{opp_heb}*.\n"
-                       f"יאללה הפועל, לתת הכל בשביל הסמל! 🚀\n\n"
-                       f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
-                       f"הפועל עולה עולההה, הפועל, הפועל עולהה 💙")
+            md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה היום נגד *{opp_heb}*.\nיאללה הפועל, לתת הכל! 🚀\n\nהפועל עולה עולההה 💙")
             if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
 
@@ -303,13 +300,11 @@ def main():
                         if last_ev.get('status', {}).get('type') in ['finished', 'FT']:
                             is_h = str(last_ev['homeTeam']['id']) == TEAM_ID
                             my, opp_s = (last_ev['homeScore']['display'], last_ev['awayScore']['display']) if is_h else (last_ev['awayScore']['display'], last_ev['homeScore']['display'])
-                            
                             res_txt = f"{random.choice(WIN_CHANTS)}\n\n*סיום המשחק:* הפועל {my}, {opp_heb} {opp_s}."
-                            markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": ONE_TABLE_URL}]]}
-                            if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
+                            if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": ONE_TABLE_URL}]]}}):
                                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"final_{today_str}\n")
                                 if f"mvp_{today_str}" not in tasks:
-                                    mvp_p = {"question": "מי ה-MVP של המשחק?", "options": DEFAULT_PLAYERS[:10], "is_anonymous": False}
+                                    mvp_p = {"question": "מי ה-MVP?", "options": DEFAULT_PLAYERS[:10], "is_anonymous": False}
                                     send_telegram(None, "sendPoll", mvp_p)
                                     with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"mvp_{today_str}\n")
             except: pass
@@ -321,47 +316,32 @@ def main():
         if processed_count >= 5: break
         print(f"DEBUG: סורק פיד: {feed_url}", flush=True)
         try:
-            resp = requests.get(feed_url, headers=RSS_HEADERS, timeout=20)
-            feed = feedparser.parse(resp.content)
+            # שימוש ב-Requests לפני feedparser כדי לעקוף חסימות
+            r_rss = requests.get(feed_url, headers=RSS_HEADERS, timeout=20)
+            feed = feedparser.parse(r_rss.content)
+            
+            if not feed.entries:
+                print(f"DEBUG: הפיד {feed_url} חזר ריק. ייתכן שיש חסימה.", flush=True)
+                continue
+
             for entry in feed.entries[:45]:
                 if processed_count >= 5: break
-                
-                # בדיקה מוקדמת של הלינק לחסכון בזמן
                 raw_link = entry.link.replace("https://svcamz.", "https://www.")
                 clean_l = clean_url(raw_link)
-                
-                # פילטר גוגל: רק ספורט 5 וספורט 1 (Maariv) יאושרו מגוגל
-                if "google" in feed_url:
-                    if not any(s in clean_l for s in ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il"]):
-                        continue
-
-                # בדיקה אם הכתבה כבר נשלחה
-                if clean_l in history: 
-                    continue
-                
-                # בדיקת טריות (עד 7 ימים)
+                if "google" in feed_url and not any(s in clean_l for s in ["sport5.co.il", "sport1.maariv.co.il", "sport1.co.il"]): continue
+                if clean_l in history: continue
                 pub_parsed = entry.get('published_parsed')
-                if pub_parsed and (now_il - datetime(*pub_parsed[:6])) > timedelta(days=7):
-                    print(f"DEBUG: מדלג על כתבה ישנה: {entry.title}", flush=True)
-                    continue
+                if pub_parsed and (now_il - datetime(*pub_parsed[:6])) > timedelta(days=7): continue
                 
                 print(f"DEBUG: בודק כתבה חדשה: {entry.title}", flush=True)
                 content, image, final_link = extract_article_data(raw_link)
-                clean_l = clean_url(final_link) # ניקוי סופי אחרי Redirects
+                clean_l = clean_url(final_link) # ניקוי סופי
 
-                # בדיקת רלוונטיות להפועל פתח תקווה
                 if "hapoelpt.com" in clean_l or any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
-                    if "hapoelpt.com" in clean_l:
-                        p_prompt = f"סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\nטקסט: {content[:3000]}"
-                    else:
-                        p_prompt = ("תקצר ל-3-4 משפטים עיתונאיים על הפועל פתח תקווה. חובה להזכיר את המילה 'הפועל' בתקציר. "
-                                    "הטון צריך להיות מקצועי ומעניין.\n\nטקסט: {content[:2500]}")
-                    
+                    p_prompt = f"סכם ב-3 משפטים ענייניים.\n\nטקסט: {content[:3000]}" if "hapoelpt.com" in clean_l else f"תקצר ל-3-4 משפטים עיתונאיים על הפועל פתח תקווה. הכלול אזכור של 'הפועל'.\n\nטקסט: {content[:2500]}"
                     summary = get_ai_response(p_prompt)
-                    
-                    # בדיקת כפילות תוכן מול סיכומים קודמים
                     if summary and "SKIP" not in summary.upper() and len(summary) > 20:
-                        dup_check = f"האם הידיעה הזו מדווחת על אותו נושא בדיוק כמו באלו? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
+                        dup_check = f"האם זה אותו נושא בדיוק? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         if "hapoelpt.com" in clean_l or "YES" not in (get_ai_response(dup_check) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_l})"
                             if (send_telegram(None, "sendPhoto", {"photo": image, "caption": full_msg}) if image else send_telegram(full_msg)):
@@ -371,8 +351,7 @@ def main():
                                 processed_count += 1
                                 print(f"DEBUG: נשלח בהצלחה.", flush=True)
                                 time.sleep(10)
-        except Exception as e: 
-            print(f"DEBUG RSS ERROR: {e}", flush=True)
+        except Exception as e: print(f"DEBUG RSS ERROR: {e}", flush=True)
 
     print(f"--- סיום ריצה: {get_israel_time().strftime('%H:%M:%S')} ---", flush=True)
 
