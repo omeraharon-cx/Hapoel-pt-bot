@@ -361,11 +361,15 @@ def main():
                 print(f"DEBUG: בודק כתבה חדשה: {entry.title}", flush=True)
                 content, image, final_link = extract_article_data(raw_link)
                 clean_l = clean_url(final_link) # ניקוי סופי אחרי Redirects
+                
+                if not content: # אם חילוץ התוכן נכשל, נשתמש ב-Summary של הפיד או בכותרת
+                    content = entry.get('summary', entry.title)
 
                 # בדיקת רלוונטיות להפועל פתח תקווה
-                if "hapoelpt.com" in clean_l or any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
-                    if "hapoelpt.com" in clean_l:
-                        # בכתבות מהאתר הרשמי - סומכים על המידע בלי סינון AI נוקשה
+                is_official = "hapoelpt.com" in clean_l
+                if is_official or any(k.lower() in (entry.title + content).lower() for k in HAPOEL_KEYS):
+                    if is_official:
+                        # בכתבות מהאתר הרשמי - דרישה פחות נוקשה מה-AI
                         p_prompt = f"סכם את הודעת המועדון ב-3 משפטים ענייניים. התחל ישר במידע.\n\nטקסט: {content[:3000]}"
                     else:
                         p_prompt = ("תקצר ל-3-4 משפטים עיתונאיים על הפועל פתח תקווה. חובה להזכיר את המילה 'הפועל' בתקציר. "
@@ -373,11 +377,15 @@ def main():
                     
                     summary = get_ai_response(p_prompt)
                     
+                    # אם זו כתבה רשמית וה-AI נכשל, נשתמש בכותרת כגיבוי במקום לדלג
+                    if is_official and (not summary or "SKIP" in summary.upper() or len(summary) < 15):
+                        summary = entry.title
+
                     # פילטר כפילות תוכות מול סיכומים קודמים
-                    if summary and "SKIP" not in summary.upper() and len(summary) > 20:
+                    if summary and "SKIP" not in summary.upper() and len(summary) > 10:
                         dup_check_p = f"האם הידיעה הזו מדווחת על אותו נושא בדיוק כמו באלו? ענה YES או NO.\nקודמים: {recent_sums[-800:]}\nחדש: {entry.title}"
                         # אם זה מהאתר הרשמי - שולחים בכל מקרה
-                        if "hapoelpt.com" in clean_l or "YES" not in (get_ai_response(dup_check_p) or "NO").upper():
+                        if is_official or "YES" not in (get_ai_response(dup_check_p) or "NO").upper():
                             full_msg = f"*עדכון חדש על הפועל ⚽️💙*\n\n{summary}\n\n🔗 [לכתבה המלאה]({clean_l})"
                             if (send_telegram(None, "sendPhoto", {"photo": image, "caption": full_msg}) if image else send_telegram(full_msg)):
                                 history.add(clean_l)
