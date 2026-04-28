@@ -288,7 +288,7 @@ def main():
         if now_il.hour >= 11 and f"matchday_{today_str}" not in tasks:
             md_text = (f"MatchDay Hapoel 💙\nהפועל שלנו תעלה היום נגד *{opp_heb}*.\n"
                        f"יאללה הפועל, לתת הכל בשביל הסמל! 🚀\n\n"
-                       f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
+                       f"כשהשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
                        f"הפועל עולה עולההה, הפועל, הפועל עולהה 💙")
             if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
                 with open("task_log.txt", 'a', encoding='utf-8') as f: f.write(f"matchday_{today_str}\n")
