@@ -118,7 +118,6 @@ TEAM_TRANSLATION = {
 
 # =====================================================
 # --- מילות מפתח לזיהוי רלוונטיות ---
-# כולל גרסאות שונות של שם הקבוצה + שמות שחקנים ומאמן
 # =====================================================
 HAPOEL_KEYS = [
     # שם הקבוצה - גרסאות שונות
@@ -138,6 +137,7 @@ PT_HINTS = ["פ\"ת", "פתח תקווה", "פתח תקוה", "פתח-תקוה",
 
 # =====================================================
 # --- מקורות RSS ---
+# 🆕 וואלה: feed/156 = כדורגל ישראלי (לא feed/22 שזה מבזקי חדשות!)
 # =====================================================
 RSS_SOURCES = [
     {
@@ -148,8 +148,8 @@ RSS_SOURCES = [
         "domain_filter": None
     },
     {
-        "name": "וואלה ספורט ישראלי",
-        "url": "https://rss.walla.co.il/feed/22",
+        "name": "וואלה - כדורגל ישראלי",  # 🆕 פיד נכון!
+        "url": "https://rss.walla.co.il/feed/156",
         "is_official": False,
         "is_google": False,
         "domain_filter": "walla.co.il"
@@ -160,13 +160,6 @@ RSS_SOURCES = [
         "is_official": False,
         "is_google": False,
         "domain_filter": "ynet.co.il"
-    },
-    {
-        "name": "ONE ספורט",
-        "url": "https://www.one.co.il/cat/rss/",
-        "is_official": False,
-        "is_google": False,
-        "domain_filter": "one.co.il"
     },
     {
         # ספורט5 דרך גוגל
@@ -183,6 +176,14 @@ RSS_SOURCES = [
         "is_official": False,
         "is_google": True,
         "domain_filter": "sport1.maariv.co.il"
+    },
+    {
+        # ONE דרך גוגל (כי הפיד הישיר נשבר)
+        "name": "ONE - גוגל",
+        "url": "https://news.google.com/rss/search?q=%22%D7%94%D7%A4%D7%95%D7%A2%D7%9C+%D7%A4%D7%AA%D7%97+%D7%AA%D7%A7%D7%95%D7%95%D7%94%22+site:one.co.il&hl=he&gl=IL&ceid=IL:he",
+        "is_official": False,
+        "is_google": True,
+        "domain_filter": "one.co.il"
     },
     {
         # גוגל כללי - fallback לכל אתר מורשה
@@ -215,6 +216,42 @@ RSS_HEADERS = {
 
 def get_israel_time():
     return datetime.utcnow() + timedelta(hours=3)
+
+
+def get_real_url_from_google(google_url, headers=None):
+    """
+    גוגל ניוז מחזיר לינקים בפורמט מקודד שלא חושף את הדומיין האמיתי.
+    הפונקציה הזו עוקבת אחר ה-redirect כדי לגלות את הלינק האמיתי.
+    """
+    if "news.google.com" not in google_url:
+        return google_url
+
+    try:
+        # ניסיון לעקוב אחר ה-redirect
+        resp = requests.get(google_url, headers=headers or RSS_HEADERS,
+                            timeout=12, allow_redirects=True)
+        final_url = resp.url
+        # אם עדיין ב-google - ננסה לחלץ מה-HTML
+        if "news.google.com" in final_url:
+            soup = BeautifulSoup(resp.content, 'html.parser')
+            # Google News מטמין את הלינק האמיתי בכמה מקומות
+            link = (soup.find("link", rel="canonical") or
+                    soup.find("a", attrs={"data-n-tid": True}))
+            if link:
+                href = link.get('href', '')
+                if href and "news.google.com" not in href:
+                    return href
+            # ניסיון אחרון - חיפוש ב-meta refresh
+            meta = soup.find("meta", attrs={"http-equiv": "refresh"})
+            if meta:
+                content = meta.get('content', '')
+                if 'url=' in content.lower():
+                    return content.split('url=', 1)[1].strip()
+        return final_url
+    except Exception as e:
+        if DEBUG_VERBOSE:
+            print(f"DEBUG: שגיאה בפענוח קישור גוגל: {e}", flush=True)
+        return google_url
 
 
 def normalize_url(url):
@@ -251,7 +288,6 @@ def normalize_url(url):
 def is_relevant_to_hapoel_pt(text):
     """
     בודק אם הטקסט באמת מתייחס להפועל פ"ת ולא להפועל אחרת.
-    זה הלב של המערכת - מאוד חשוב שיהיה מדויק.
     מחזיר tuple: (האם רלוונטי, מה זוהה - לדיבוג)
     """
     if not text:
@@ -270,6 +306,63 @@ def is_relevant_to_hapoel_pt(text):
                 return True, f"זוהה צירוף: 'הפועל' + '{hint}'"
 
     return False, "לא נמצאה התאמה"
+
+
+def get_google_entry_source_domain(entry):
+    """
+    מנסה לגלות מאיזה אתר באה הכתבה מ-RSS של גוגל.
+    גוגל שם את שם המקור בתגית <source> של ה-feed.
+    """
+    # נסיון 1: שדה source
+    src = entry.get('source', None)
+    if src:
+        if isinstance(src, dict):
+            url = src.get('url', '') or src.get('href', '')
+            if url:
+                return url.lower()
+            title = src.get('title', '') or src.get('value', '')
+            return title.lower() if title else ""
+        if isinstance(src, str):
+            return src.lower()
+
+    # נסיון 2: source_detail
+    if 'source_detail' in entry:
+        sd = entry['source_detail']
+        if isinstance(sd, dict):
+            url = sd.get('url', '') or sd.get('href', '')
+            return url.lower() if url else ""
+
+    # נסיון 3: מהכותרת או מ-summary - גוגל לפעמים מוסיף " - שם האתר" בסוף הכותרת
+    title = entry.get('title', '')
+    if ' - ' in title:
+        suffix = title.rsplit(' - ', 1)[-1].lower()
+        return suffix
+
+    return ""
+
+
+def matches_allowed_domain_from_google(entry, domain_filter=None):
+    """
+    בודק אם כתבה מ-Google News היא מאתר מורשה.
+    מחזיר tuple: (התאמה, שם הדומיין שזוהה)
+    """
+    src_text = get_google_entry_source_domain(entry)
+
+    # אם יש domain_filter ספציפי
+    if domain_filter:
+        # בדיקה ישירה - גם אם רק חלק משם הדומיין
+        domain_keyword = domain_filter.split('.')[0]  # למשל "sport5"
+        if domain_keyword.lower() in src_text:
+            return True, src_text
+        return False, src_text
+
+    # ללא פילטר - מחפשים את אחד מהאתרים המורשים
+    for allowed in ALLOWED_DOMAINS:
+        keyword = allowed.split('.')[0].lower()
+        if keyword in src_text:
+            return True, src_text
+
+    return False, src_text
 
 
 def send_telegram(text, method="sendMessage", payload=None):
@@ -303,17 +396,13 @@ def send_telegram(text, method="sendMessage", payload=None):
 
 
 def call_gemini(prompt, timeout=30, label="generic"):
-    """
-    קריאה בסיסית ל-Gemini API עם לוגים מפורטים.
-    label = תיאור למה הקריאה מיועדת (לדיבוג)
-    """
+    """קריאה בסיסית ל-Gemini API עם לוגים מפורטים"""
     if not GEMINI_API_KEY:
         if DEBUG_GEMINI:
             print(f"  [GEMINI:{label}] ⚠️ אין מפתח API!", flush=True)
         return None
 
     if DEBUG_GEMINI:
-        # נציג את 200 התווים הראשונים של הפרומפט
         prompt_preview = prompt[:200].replace('\n', ' ')
         print(f"  [GEMINI:{label}] 📤 שולח (אורך: {len(prompt)}): {prompt_preview}...", flush=True)
 
@@ -333,15 +422,12 @@ def call_gemini(prompt, timeout=30, label="generic"):
 
         data = res.json()
 
-        # בדיקה של safety blocks וכשלים אחרים
         if 'candidates' not in data or not data['candidates']:
             if DEBUG_GEMINI:
-                print(f"  [GEMINI:{label}] ⚠️ אין candidates בתשובה: {json.dumps(data, ensure_ascii=False)[:300]}", flush=True)
+                print(f"  [GEMINI:{label}] ⚠️ אין candidates: {json.dumps(data, ensure_ascii=False)[:300]}", flush=True)
             return None
 
         candidate = data['candidates'][0]
-
-        # בדיקת finishReason - לפעמים Gemini חוסם תוכן
         finish_reason = candidate.get('finishReason', '')
         if finish_reason and finish_reason not in ['STOP', 'MAX_TOKENS']:
             if DEBUG_GEMINI:
@@ -355,7 +441,6 @@ def call_gemini(prompt, timeout=30, label="generic"):
         result = candidate['content']['parts'][0]['text'].strip()
 
         if DEBUG_GEMINI:
-            # נציג את התשובה המלאה
             print(f"  [GEMINI:{label}] 📥 קיבל ({len(result)} תווים): {result[:300]}", flush=True)
 
         return result
@@ -367,14 +452,10 @@ def call_gemini(prompt, timeout=30, label="generic"):
 
 
 def get_ai_summary(title, content, is_official=False):
-    """
-    מחזיר תקציר עיתונאי של הכתבה.
-    ⚠️ לא מבקש מ-Gemini להחליט על רלוונטיות - זו אחריות של הקוד.
-    """
+    """מחזיר תקציר עיתונאי של הכתבה"""
     if not content and not title:
         return None
 
-    # אם התוכן קצר מאוד - נחזיר את הכותרת כסיכום
     if len(content) < 80:
         if DEBUG_VERBOSE:
             print(f"  תוכן קצר מאוד ({len(content)} תווים), נשתמש בכותרת", flush=True)
@@ -400,7 +481,6 @@ def get_ai_summary(title, content, is_official=False):
 
     summary = call_gemini(prompt, label="summary")
 
-    # אם Gemini החזיר משהו ארוך מדי - נחתוך
     if summary and len(summary) > 1000:
         summary = summary[:1000] + "..."
 
@@ -670,7 +750,6 @@ def main():
     processed_count = 0
     MAX_ARTICLES_PER_RUN = 8
 
-    # סטטיסטיקות לדיבוג
     stats = {
         "total_seen": 0,
         "filtered_already_seen": 0,
@@ -714,7 +793,7 @@ def main():
             for entry in feed.entries[:30]:
                 if processed_count >= MAX_ARTICLES_PER_RUN:
                     break
-                if articles_from_source >= 3:  # מקסימום 3 כתבות לפיד
+                if articles_from_source >= 3:
                     break
 
                 stats["total_seen"] += 1
@@ -723,15 +802,43 @@ def main():
                 if not raw_link:
                     continue
 
-                raw_link = raw_link.replace("https://svcamz.", "https://www.")
+                title = entry.get('title', '').strip()
+                rss_summary = entry.get('summary', '')
 
-                # פילטר דומיין
-                if domain_filter and domain_filter not in raw_link.lower():
-                    stats["filtered_wrong_domain"] += 1
-                    continue
-                if is_google and not domain_filter and not is_domain_allowed(raw_link):
-                    stats["filtered_wrong_domain"] += 1
-                    continue
+                # ====== טיפול בלינקים מגוגל ======
+                # גוגל ניוז: הלינק ב-RSS לא חושף את הדומיין האמיתי.
+                # נשתמש בשדה <source> כדי לדעת מאיפה הכתבה.
+                if is_google:
+                    matches, src_text = matches_allowed_domain_from_google(entry, domain_filter)
+                    if not matches:
+                        if DEBUG_VERBOSE:
+                            print(f"DEBUG: ⏭️ אתר לא מורשה (גוגל - source: '{src_text[:40]}'): {title[:50]}", flush=True)
+                        stats["filtered_wrong_domain"] += 1
+                        continue
+                    # פילטר רלוונטיות מקדים בכותרת
+                    is_rel, reason = is_relevant_to_hapoel_pt(title + " " + rss_summary)
+                    if not is_rel:
+                        if DEBUG_VERBOSE:
+                            print(f"DEBUG: ⏭️ לא רלוונטי בכותרת (גוגל): {title[:50]}", flush=True)
+                        stats["filtered_not_relevant"] += 1
+                        continue
+                    # אם הגענו לכאן - הכתבה רלוונטית. נחלץ את הלינק האמיתי
+                    if DEBUG_VERBOSE:
+                        print(f"DEBUG: ✓ רלוונטי בגוגל ({reason}): {title[:55]}", flush=True)
+                        print(f"DEBUG:   מחלץ לינק אמיתי...", flush=True)
+                    real_link = get_real_url_from_google(raw_link)
+                    if "news.google.com" in real_link:
+                        if DEBUG_VERBOSE:
+                            print(f"DEBUG:   ⚠️ לא הצלחתי לחלץ לינק - מדלג", flush=True)
+                        stats["errors"] += 1
+                        continue
+                    raw_link = real_link
+                else:
+                    # אתר רגיל (לא גוגל) - פילטר דומיין
+                    raw_link = raw_link.replace("https://svcamz.", "https://www.")
+                    if domain_filter and domain_filter not in raw_link.lower():
+                        stats["filtered_wrong_domain"] += 1
+                        continue
 
                 # בדיקת כפילות (לינק)
                 clean_l = normalize_url(raw_link)
@@ -750,22 +857,16 @@ def main():
                     except:
                         pass
 
-                title = entry.get('title', '').strip()
-
-                # ====== בדיקת רלוונטיות שלב 1 - כותרת + summary של ה-RSS ======
-                rss_summary = entry.get('summary', '')
-                quick_check_text = title + " " + rss_summary
-
-                if not is_official:
+                # ====== בדיקת רלוונטיות שלב 1 - כותרת ======
+                # (רק לאתרים שאינם גוגל - לגוגל כבר בדקנו למעלה)
+                if not is_google and not is_official:
+                    quick_check_text = title + " " + rss_summary
                     is_rel, reason = is_relevant_to_hapoel_pt(quick_check_text)
                     if not is_rel:
-                        # מאתרי גוגל - אם לא בכותרת, לרוב לא רלוונטי
-                        if is_google:
-                            if DEBUG_VERBOSE:
-                                print(f"DEBUG: ⏭️ לא רלוונטי בכותרת (גוגל): {title[:60]}", flush=True)
-                            stats["filtered_not_relevant"] += 1
-                            continue
-                        # מאתר ישראלי - ננסה לחלץ ולבדוק שוב
+                        if DEBUG_VERBOSE:
+                            print(f"DEBUG: ⏭️ לא רלוונטי בכותרת: {title[:60]}", flush=True)
+                        stats["filtered_not_relevant"] += 1
+                        continue
                     else:
                         if DEBUG_VERBOSE:
                             print(f"DEBUG: ✓ רלוונטי בכותרת ({reason}): {title[:60]}", flush=True)
@@ -786,9 +887,9 @@ def main():
                     if DEBUG_VERBOSE:
                         print(f"DEBUG:   חילוץ נכשל ({len(content)} תווים), נשתמש ב-summary של ה-RSS", flush=True)
 
-                # ====== בדיקת רלוונטיות שלב 2 - כותרת + תוכן מלא ======
-                full_text_for_check = title + " " + content[:1500]
+                # ====== בדיקת רלוונטיות שלב 2 - תוכן מלא ======
                 if not is_official:
+                    full_text_for_check = title + " " + content[:1500]
                     is_rel, reason = is_relevant_to_hapoel_pt(full_text_for_check)
                     if not is_rel:
                         if DEBUG_VERBOSE:
@@ -801,7 +902,7 @@ def main():
 
                 # ====== בדיקת כפילות תוכן ======
                 if is_duplicate_content(title, recent_sums):
-                    print(f"DEBUG:   ⏭️ כפילות תוכן עם כתבה אחרת: {title[:60]}", flush=True)
+                    print(f"DEBUG:   ⏭️ כפילות תוכן: {title[:60]}", flush=True)
                     stats["filtered_duplicate_content"] += 1
                     continue
 
@@ -810,7 +911,7 @@ def main():
 
                 if not summary or len(summary) < 15:
                     if is_official:
-                        summary = title  # גיבוי לאתר הרשמי
+                        summary = title
                         print(f"DEBUG:   Gemini נכשל - משתמש בכותרת כגיבוי", flush=True)
                     else:
                         print(f"DEBUG:   ⏭️ אין תקציר תקין: {title[:60]}", flush=True)
@@ -830,7 +931,7 @@ def main():
                         f.write(clean_l + "\n")
                     with open("recent_summaries.txt", 'a', encoding='utf-8') as f:
                         f.write(summary + "|||\n")
-                    recent_sums += summary + "|||\n"  # עדכון בזיכרון לבדיקות הבאות
+                    recent_sums += summary + "|||\n"
                     processed_count += 1
                     articles_from_source += 1
                     stats["sent"] += 1
