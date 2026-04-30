@@ -424,11 +424,24 @@ def send_telegram(text, method="sendMessage", payload=None):
     return overall_status
 
 
+# 🆕 משתנה גלובלי שמסמן אם נחסמנו ע"י Gemini (חרגנו מהמכסה)
+# אם True - נחזיר None לכל הקריאות הבאות בריצה הזו, חוסך זמן וטוקנים
+GEMINI_QUOTA_EXCEEDED = False
+
+
 def call_gemini(prompt, timeout=30, label="generic"):
     """קריאה ל-Gemini API"""
+    global GEMINI_QUOTA_EXCEEDED
+
     if not GEMINI_API_KEY:
         if DEBUG_GEMINI:
             print(f"  [GEMINI:{label}] ⚠️ אין מפתח API!", flush=True)
+        return None
+
+    # 🆕 אם כבר חרגנו מהמכסה - לא נמשיך לנסות
+    if GEMINI_QUOTA_EXCEEDED:
+        if DEBUG_GEMINI:
+            print(f"  [GEMINI:{label}] ⏭️ דילוג - מכסת Gemini הסתיימה לריצה הזו", flush=True)
         return None
 
     if DEBUG_GEMINI:
@@ -443,6 +456,12 @@ def call_gemini(prompt, timeout=30, label="generic"):
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=timeout
         )
+
+        # 🆕 טיפול ב-429 - מכסה הסתיימה
+        if res.status_code == 429:
+            print(f"  [GEMINI:{label}] 🛑 חריגה ממכסת Gemini! מסמן שלא לנסות שוב בריצה זו.", flush=True)
+            GEMINI_QUOTA_EXCEEDED = True
+            return None
 
         if res.status_code != 200:
             if DEBUG_GEMINI:
@@ -481,12 +500,17 @@ def is_article_main_topic_hapoel_pt(title, content):
     sample_content = content[:1500] if content else title
 
     prompt = (
-        "האם הכתבה הבאה עוסקת **בעיקר** במועדון הכדורגל **הפועל פתח תקווה** (לא מכבי פתח תקווה!)? "
-        "ענה לפי הכללים הבאים:\n"
-        "- YES: אם הפועל פתח תקווה היא הנושא העיקרי, או שחקן/מאמן שלה הוא במרכז.\n"
-        "- NO: אם הכתבה על מועדון אחר (כולל מכבי פתח תקווה!) ורק מזכירה את הפועל פ\"ת, "
-        "או שזה משחק שבו הפועל פ\"ת היא היריבה ולא במוקד.\n"
-        "- חשוב: מכבי פתח תקווה היא קבוצה שונה (יריבה) מהפועל פתח תקווה!\n\n"
+        "האם הכתבה הבאה רלוונטית לאוהדי הפועל פתח תקווה (לא מכבי פתח תקווה!)? "
+        "אוהדי הקבוצה רוצים לקבל כתבות על:\n"
+        "- כל כתבה שעוסקת בהפועל פתח תקווה (גם אם היא הפסידה / היא קבוצת המשנה בכותרת)\n"
+        "- משחקים של הפועל פ\"ת (גם אם הקבוצה היריבה היא הראשונה בכותרת!)\n"
+        "- שחקנים, מאמנים, חיזוקים, פציעות של הפועל פ\"ת\n"
+        "- לוח משחקים, סיקור משחקים, סיכומים, ראיונות עם הקבוצה\n\n"
+        "אוהדים **לא** רוצים לקבל:\n"
+        "- כתבות שעוסקות אך ורק במועדונים אחרים שמזכירות בחטף את הפועל פ\"ת\n"
+        "- כתבות על מכבי פתח תקווה (זו קבוצה אחרת לחלוטין, היריבה!)\n"
+        "- כתבות כלליות על ליגת העל בלי קשר ספציפי להפועל פ\"ת\n\n"
+        "ענה YES אם כדאי לשלוח את הכתבה לאוהדים, NO אם לא.\n\n"
         f"כותרת: {title}\n\n"
         f"תחילת הכתבה: {sample_content}\n\n"
         "ענה YES או NO בלבד."
@@ -538,17 +562,57 @@ def get_ai_summary(title, content, is_official=False):
 
 
 def is_duplicate_content(new_title, recent_summaries):
-    """בודק עם Gemini אם הכתבה כפולה"""
-    if not GEMINI_API_KEY or not recent_summaries.strip() or len(recent_summaries) < 50:
+    """
+    🆕 בודק כפילות תוכן באמצעות חישוב דמיון מקומי (ללא Gemini!)
+    חיסכון של עשרות קריאות API ביום.
+    משווה את הכותרת החדשה מול כל הסיכומים האחרונים על בסיס מילים משותפות.
+    """
+    if not recent_summaries.strip() or len(recent_summaries) < 50:
         return False
-    prompt = (
-        "האם הידיעה החדשה מדווחת על אותו אירוע ספציפי בדיוק כמו אחד מהסיכומים הקודמים? "
-        "ענה YES או NO בלבד.\n\n"
-        f"כותרת חדשה: {new_title}\n\n"
-        f"סיכומים קודמים:\n{recent_summaries[-1000:]}"
-    )
-    answer = call_gemini(prompt, timeout=20, label="dup-check")
-    return "YES" in (answer or "NO").upper()
+
+    # ניקוי מילות חיבור נפוצות שלא מועילות לזיהוי כפילות
+    stop_words = {
+        "של", "על", "את", "אם", "מה", "כי", "זה", "לא", "גם", "עם", "אבל",
+        "או", "כך", "רק", "כן", "כל", "הוא", "היא", "אני", "אתה", "אנחנו",
+        "the", "a", "an", "and", "or", "but", "to", "of", "in", "on"
+    }
+
+    def tokenize(text):
+        """מחלץ מילים משמעותיות מטקסט"""
+        # הסרת סימני פיסוק והפיכה ל-lowercase
+        cleaned = ''.join(c if c.isalnum() or c.isspace() else ' ' for c in text.lower())
+        words = cleaned.split()
+        return set(w for w in words if len(w) >= 3 and w not in stop_words)
+
+    new_words = tokenize(new_title)
+    if len(new_words) < 3:
+        return False  # כותרת קצרה מדי לבדיקה
+
+    # מפצלים את הסיכומים האחרונים (האחרונים 5)
+    summaries = recent_summaries.split("|||")[-5:]
+
+    for prev_summary in summaries:
+        if not prev_summary.strip():
+            continue
+        prev_words = tokenize(prev_summary)
+        if len(prev_words) < 3:
+            continue
+
+        # חישוב דמיון Jaccard (חיתוך / איחוד)
+        intersection = new_words & prev_words
+        union = new_words | prev_words
+        if not union:
+            continue
+
+        similarity = len(intersection) / len(union)
+        # אם 50% או יותר מהמילים זהות - כפילות
+        if similarity >= 0.5:
+            if DEBUG_VERBOSE:
+                shared = ', '.join(list(intersection)[:5])
+                print(f"DEBUG:   זוהתה כפילות מקומית (דמיון {similarity:.0%}, מילים: {shared})", flush=True)
+            return True
+
+    return False
 
 
 def extract_article_data(url):
@@ -1108,12 +1172,27 @@ def main():
                         continue
 
                 # 🎯 בדיקה: הפועל פ"ת היא הנושא העיקרי?
+                # 🆕 חיסכון: דילוג אם הכותרת ברורה (כדי לחסוך קריאות Gemini)
                 if not is_official:
-                    if not is_article_main_topic_hapoel_pt(title, content):
+                    title_lower = title.lower()
+                    # אם שם הקבוצה המלא מופיע בכותרת - מספיק ברור, לא צריך לבדוק
+                    title_has_clear_mention = any(
+                        clear_key in title_lower for clear_key in [
+                            "הפועל פתח תקווה", "הפועל פתח תקוה", "הפועל פתח-תקוה",
+                            "הפועל פ\"ת", "הפועל פ'ת"
+                        ]
+                    )
+
+                    if not title_has_clear_mention:
+                        # רק אם לא ברור מהכותרת - נשאל את Gemini
+                        if not is_article_main_topic_hapoel_pt(title, content):
+                            if DEBUG_VERBOSE:
+                                print(f"DEBUG:   ⏭️ הפועל פ\"ת לא הנושא העיקרי", flush=True)
+                            stats["filtered_not_main_topic"] += 1
+                            continue
+                    else:
                         if DEBUG_VERBOSE:
-                            print(f"DEBUG:   ⏭️ הפועל פ\"ת לא הנושא העיקרי", flush=True)
-                        stats["filtered_not_main_topic"] += 1
-                        continue
+                            print(f"DEBUG:   ✓ כותרת ברורה - דילוג על topic-check", flush=True)
 
                 if is_duplicate_content(title, recent_sums):
                     print(f"DEBUG:   ⏭️ כפילות תוכן", flush=True)
