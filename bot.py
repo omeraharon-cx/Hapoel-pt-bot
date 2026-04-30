@@ -39,7 +39,7 @@ GEMINI_MODEL = "gemini-2.5-flash-lite"
 # "ADMIN_ONLY" = הודעות רק אליך (לטסטים)
 # "BROADCAST"  = הודעות לכל המנויים (פרודקשן)
 # =====================================================
-RUN_MODE = "BROADCAST"
+RUN_MODE = "ADMIN_ONLY"
 
 # האם להפעיל את לוגיקת יום המשחק
 ENABLE_MATCHDAY_LOGIC = True
