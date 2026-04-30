@@ -31,8 +31,13 @@ TEAM_ID = "5199"
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
-# מודל Gemini עדכני
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+# מודל Gemini
+# 🆕 שדרוג ל-gemini-2.0-flash - אותה מכסה אבל מודל יותר חכם
+# אופציות:
+#   "gemini-2.5-flash-lite" - הכי זול אבל מכסה קטנה
+#   "gemini-2.0-flash" - מאוזן (מומלץ! ✅)
+#   "gemini-2.5-flash" - יותר חזק, אותה מכסה
+GEMINI_MODEL = "gemini-2.0-flash"
 
 # =====================================================
 # 🎛️  מתג מצב הפעלה
@@ -302,20 +307,26 @@ def is_about_maccabi_pt(text):
         return False, ""
     text_lower = text.lower()
 
-    for key in MACCABI_PT_KEYS:
-        if key.lower() in text_lower:
-            return True, f"זוהה: '{key}'"
-
+    # 🆕 קודם נבדוק אם הפועל פ"ת מוזכרת בטקסט - אם כן, זה לא חסימה!
+    # (יכול להיות כתבה כללית ששתי הקבוצות מוזכרות בה)
     has_hapoel_pt = False
-    for hkey in HAPOEL_KEYS[:11]:
+    for hkey in HAPOEL_KEYS[:11]:  # רק שמות הקבוצה הראשיים
         if hkey.lower() in text_lower:
             has_hapoel_pt = True
             break
 
-    if not has_hapoel_pt:
-        for player in MACCABI_PT_PLAYERS:
-            if player.lower() in text_lower:
-                return True, f"זוהה שחקן מכבי: '{player}'"
+    # אם הפועל פ"ת מוזכרת - הכתבה עוברת לבדיקות אחרות (לא חוסמים פה)
+    if has_hapoel_pt:
+        return False, ""
+
+    # רק אם הפועל פ"ת *לא* מוזכרת - בודקים אם זו כתבת מכבי
+    for key in MACCABI_PT_KEYS:
+        if key.lower() in text_lower:
+            return True, f"זוהה: '{key}' (ללא אזכור הפועל פ\"ת)"
+
+    for player in MACCABI_PT_PLAYERS:
+        if player.lower() in text_lower:
+            return True, f"זוהה שחקן מכבי: '{player}' (ללא אזכור הפועל פ\"ת)"
 
     return False, ""
 
