@@ -1,47 +1,47 @@
 {
-  "last_update": "2026-05-01T23:05:01.716378",
+  "last_update": "2026-05-02T00:38:10.868019",
   "matches": {
     "2026-05-02": {
       "opponent": "מכבי חיפה",
-      "match_time_iso": null,
-      "match_id": null,
-      "is_home": null
+      "match_time_iso": "2026-05-02T20:15:00",
+      "match_id": 474827,
+      "is_home": true
     },
     "2026-05-05": {
-      "opponent": "מכבי תל אביב",
-      "match_time_iso": null,
-      "match_id": null,
-      "is_home": null
+      "opponent": "מכבי ת\"א",
+      "match_time_iso": "2026-05-05T19:30:00",
+      "match_id": 474830,
+      "is_home": false
     },
     "2026-05-09": {
-      "opponent": "הפועל באר שבע",
-      "match_time_iso": null,
-      "match_id": null,
-      "is_home": null
+      "opponent": "הפועל ב\"ש",
+      "match_time_iso": "2026-05-09T20:30:00",
+      "match_id": 474833,
+      "is_home": true
     },
     "2026-05-12": {
-      "opponent": "הפועל תל אביב",
-      "match_time_iso": null,
-      "match_id": null,
-      "is_home": null
+      "opponent": "בית\"ר ירושלים",
+      "match_time_iso": "2026-05-12T19:00:00",
+      "match_id": 474839,
+      "is_home": true
+    },
+    "2026-05-14": {
+      "opponent": "הפועל ת\"א",
+      "match_time_iso": "2026-05-14T19:00:00",
+      "match_id": 474836,
+      "is_home": false
     },
     "2026-05-16": {
       "opponent": "מכבי חיפה",
-      "match_time_iso": null,
-      "match_id": null,
-      "is_home": null
+      "match_time_iso": "2026-05-16T19:00:00",
+      "match_id": 474842,
+      "is_home": false
     },
     "2026-05-19": {
-      "opponent": "בית\"ר ירושלים",
-      "match_time_iso": null,
-      "match_id": null,
-      "is_home": null
-    },
-    "2026-05-23": {
-      "opponent": "מכבי תל אביב",
-      "match_time_iso": null,
-      "match_id": null,
-      "is_home": null
+      "opponent": "מכבי ת\"א",
+      "match_time_iso": "2026-05-19T19:00:00",
+      "match_id": 474845,
+      "is_home": true
     }
   }
 }
