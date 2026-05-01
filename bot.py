@@ -24,11 +24,10 @@ except ImportError:
 # =====================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 
 ADMIN_ID = "425605110"
-TEAM_ID = "5199"
-RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
+TEAM_ID = "6"  # one.co.il team ID for הפועל פ"ת
+ONE_API_URL = f"https://www.one.co.il/api/team/{TEAM_ID}"
 ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=20264712"
 
 # מודל Gemini
@@ -49,13 +48,7 @@ RUN_MODE = "ADMIN_ONLY"
 # האם להפעיל את לוגיקת יום המשחק
 ENABLE_MATCHDAY_LOGIC = True
 
-# =====================================================
-# 🆕 הגדרות חיסכון בטוקני API
-# =====================================================
-# כמה ימים אחורה מותר ללוח להיות לפני שנעדכן מה-API (גם אם לא נשבר)
-SCHEDULE_REFRESH_DAYS = 7
-
-# שעות לפני המשחק לשלוח הודעת הימורים (היה 3 שעות)
+# שעות לפני המשחק לשלוח הודעת הימורים
 HOURS_BEFORE_MATCH_FOR_BETTING = 3
 
 # שעות לפני המשחק לשלוח הודעת MatchDay (בוקר היום)
@@ -76,30 +69,6 @@ DEFAULT_PLAYERS = [
     "עומר כץ", "אוראל דגני", "נדב נידם", "יונתן כהן", "רועי דוד",
     "קוסטה", "שביט מזל", "נועם כהן", "בוני", "דיארה"
 ]
-
-PLAYER_MAP = {
-    "Omer Katz": "עומר כץ",
-    "Orel Dgani": "אוראל דגני",
-    "Nadav Niddam": "נדב נידם",
-    "Yonatan Cohen": "יונתן כהן",
-    "Roee David": "רועי דוד",
-    "Itay Rotman": "איתי רוטמן",
-    "Alex Moussounda": "מוסונדה",
-    "Mark Costa": "קוסטה",
-    "Shavit Mazal": "שביט מזל",
-    "Andrade Euclides Claye": "קליי",
-    "Chipuoka Songa": "סונגה",
-    "Tomer Altman": "אלטמן",
-    "Dror Nir": "דרור ניר",
-    "Shahar Rosen": "שחר רוזן",
-    "Idan Cohen": "עידן כהן",
-    "Noam Cohen": "נועם כהן",
-    "Boni Amanis": "בוני",
-    "Fortune Diarra": "דיארה",
-    "Matan Gosha": "מתן גושה",
-    "Yarin Levi": "ירין לוי",
-    "Daniel Joulani": "דניאל גולאני"
-}
 
 MATCHDAY_POSTERS = [
     "https://i.ibb.co/LhxyQDdW/2026-04-07-12-21-58.png",
@@ -131,24 +100,6 @@ BACKUP_SCHEDULE = {
     "2026-05-16": "מכבי חיפה",
     "2026-05-19": 'בית"ר ירושלים',
     "2026-05-23": "מכבי תל אביב"
-}
-
-TEAM_TRANSLATION = {
-    "Maccabi Haifa": "מכבי חיפה",
-    "Maccabi Tel Aviv": "מכבי תל אביב",
-    "Hapoel Beer Sheva": "הפועל באר שבע",
-    "Beitar Jerusalem": 'בית"ר ירושלים',
-    "Maccabi Bnei Reineh": "מכבי בני ריינה",
-    "Ironi Tiberias": "עירוני טבריה",
-    "Bnei Sakhnin": "בני סכנין",
-    "M.S. Ashdod": "מ.ס. אשדוד",
-    "Hapoel Tel Aviv": "הפועל תל אביב",
-    "Hapoel Haifa": "הפועל חיפה",
-    "Maccabi Netanya": "מכבי נתניה",
-    "Hapoel Jerusalem": "הפועל ירושלים",
-    "Ironi Kiryat Shmona": "עירוני קרית שמונה",
-    "Maccabi Petah Tikva": "מכבי פתח תקווה",
-    "Hapoel Petah Tikva": "הפועל פתח תקווה"
 }
 
 # מילות מפתח לזיהוי הפועל פ"ת
@@ -445,7 +396,6 @@ GEMINI_QUOTA_EXCEEDED = False
 GEMINI_USAGE_FILE = "gemini_usage.txt"
 GEMINI_DAILY_LIMIT = 1500
 GEMINI_ALERT_THRESHOLD = 1200  # 80% — אלרט מקדים
-RAPIDAPI_ALERT_THRESHOLD = 15  # קריאות שנותרו בחודש
 
 
 def send_admin_alert(msg):
@@ -510,32 +460,6 @@ def increment_gemini_usage():
     except Exception as e:
         print(f"DEBUG: שגיאה בעדכון מונה Gemini: {e}", flush=True)
     return count
-
-
-def check_rapidapi_quota(response):
-    """בודק את הכותרות של RapidAPI ושולח התראה אם נשארו פחות מהסף"""
-    try:
-        remaining_h = response.headers.get('x-ratelimit-requests-remaining')
-        limit_h = response.headers.get('x-ratelimit-requests-limit')
-        if remaining_h is None:
-            return
-        remaining = int(remaining_h)
-        limit_str = f"/{limit_h}" if limit_h else ""
-        print(f"DEBUG: 📊 RapidAPI: {remaining}{limit_str} קריאות נותרו החודש", flush=True)
-
-        if remaining <= RAPIDAPI_ALERT_THRESHOLD and not already_alerted_today("rapidapi_low"):
-            msg = (
-                f"⚠️ *התראת מכסה: API-Football*\n\n"
-                f"נותרו רק *{remaining}{limit_str}* קריאות בחודש הזה.\n\n"
-                f"*הצעות פתרון:*\n"
-                f"1. להמתין לאיפוס בתחילת החודש הבא.\n"
-                f"2. לעצור זמנית את לוגיקת המשחק: שנה ב-bot.py את `ENABLE_MATCHDAY_LOGIC = False`.\n"
-                f"3. לשדרג חבילה ב-RapidAPI אם רוצים להמשיך החודש."
-            )
-            send_admin_alert(msg)
-            mark_alerted_today("rapidapi_low")
-    except Exception as e:
-        print(f"DEBUG: שגיאה בבדיקת מכסת RapidAPI: {e}", flush=True)
 
 
 def call_gemini(prompt, timeout=30, label="generic"):
@@ -851,67 +775,95 @@ def save_schedule(schedule_data):
         json.dump(schedule_data, f, ensure_ascii=False, indent=2)
 
 
-def needs_schedule_refresh(schedule_data):
+def fetch_team_data_from_one():
     """
-    🎯 קובע אם צריך לרענן את לוח המשחקים מה-API.
-    מרענן רק אם:
-    - אין לוח כלל
-    - עברו יותר מ-SCHEDULE_REFRESH_DAYS ימים מהעדכון האחרון
+    🎯 מביא את כל נתוני הקבוצה מ-one.co.il (חינמי, ללא מכסה).
+    מחזיר dict עם upcomingMatches, recentMatches, squad, וכו' — או None בשגיאה.
     """
-    if not schedule_data.get("matches"):
-        return True
-
-    last_update_str = schedule_data.get("last_update")
-    if not last_update_str:
-        return True
-
+    print("DEBUG: 📡 קורא ל-one.co.il API", flush=True)
     try:
-        last_update = datetime.fromisoformat(last_update_str)
-        days_passed = (get_israel_time() - last_update).days
-        return days_passed >= SCHEDULE_REFRESH_DAYS
-    except:
-        return True
-
-
-def fetch_schedule_from_api(headers_api):
-    """
-    🎯 מביא את לוח המשחקים מה-API (קריאה אחת בשבוע!).
-    מחזיר dict עם תאריך → {opponent, match_time_iso, match_id, is_home}
-    """
-    print("DEBUG: 📅 מעדכן לוח משחקים מה-API (פעם בשבוע)", flush=True)
-    try:
-        resp_sched = requests.get(
-            f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/10",
-            headers=headers_api, timeout=15
+        resp = requests.get(
+            ONE_API_URL,
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=15
         )
-        check_rapidapi_quota(resp_sched)
-        r_sched = resp_sched.json()
-
-        if 'events' in r_sched and r_sched['events']:
-            new_matches = {}
-            for ev in r_sched['events']:
-                # זמן המשחק בשעון ישראל
-                match_time_il = datetime.fromtimestamp(ev['startTimestamp']) + timedelta(hours=3)
-                d_key = match_time_il.strftime('%Y-%m-%d')
-
-                is_home = str(ev['homeTeam']['id']) == TEAM_ID
-                opp_raw = ev['awayTeam']['name'] if is_home else ev['homeTeam']['name']
-                opp_heb = TEAM_TRANSLATION.get(opp_raw, opp_raw)
-
-                new_matches[d_key] = {
-                    "opponent": opp_heb,
-                    "match_time_iso": match_time_il.isoformat(),
-                    "match_id": ev.get('id'),
-                    "is_home": is_home
-                }
-            print(f"DEBUG: ✅ לוח עודכן עם {len(new_matches)} משחקים", flush=True)
-            return new_matches
-        else:
-            print("DEBUG: ⚠️ ה-API לא החזיר משחקים", flush=True)
-            return None
+        resp.raise_for_status()
+        return resp.json()
     except Exception as e:
-        print(f"DEBUG: ❌ שגיאה בקבלת לוח: {e}", flush=True)
+        print(f"DEBUG: ❌ שגיאה בגישה ל-one.co.il: {e}", flush=True)
+        if not already_alerted_today("one_api_down"):
+            send_admin_alert(
+                "⚠️ *one.co.il API לא זמין*\n\n"
+                f"שגיאה: `{e}`\n\n"
+                "המערכת תשתמש בלוח cache או ב-`BACKUP_SCHEDULE`. "
+                "כדאי לבדוק שהמבנה לא השתנה."
+            )
+            mark_alerted_today("one_api_down")
         return None
+
+
+def parse_upcoming_matches(team_data):
+    """ממיר upcomingMatches מ-one.co.il לפורמט הפנימי: dict של תאריך → פרטי משחק."""
+    if not team_data or not team_data.get('upcomingMatches'):
+        return None
+    new_matches = {}
+    for match in team_data['upcomingMatches']:
+        try:
+            match_dt = datetime.fromisoformat(match['date'])
+            d_key = match_dt.strftime('%Y-%m-%d')
+            home = match.get('homeTeam', {})
+            away = match.get('awayTeam', {})
+            is_home = str(home.get('id')) == TEAM_ID
+            opponent = away.get('name') if is_home else home.get('name')
+            if not opponent:
+                continue
+            new_matches[d_key] = {
+                "opponent": opponent,
+                "match_time_iso": match_dt.isoformat(),
+                "match_id": match.get('id'),
+                "is_home": is_home
+            }
+        except Exception as e:
+            print(f"DEBUG: ⚠️ דילוג על משחק עתידי: {e}", flush=True)
+            continue
+    if new_matches:
+        print(f"DEBUG: ✅ לוח עודכן עם {len(new_matches)} משחקים מ-one.co.il", flush=True)
+        return new_matches
+    return None
+
+
+def find_today_result(team_data, today_str):
+    """
+    מחפש ב-recentMatches משחק שנגמר היום.
+    מחזיר dict עם {is_home, my_score, opp_score, match_id} או None.
+    """
+    if not team_data or not team_data.get('recentMatches'):
+        return None
+    for match in team_data['recentMatches']:
+        try:
+            match_dt = datetime.fromisoformat(match['date'])
+            if match_dt.strftime('%Y-%m-%d') != today_str:
+                continue
+            if not match.get('isStarted') or match.get('isLive'):
+                continue
+            score = match.get('score')
+            if not score or '-1' in str(score):
+                continue
+            parts = score.split(' - ')
+            if len(parts) != 2:
+                continue
+            home_score, away_score = parts[0].strip(), parts[1].strip()
+            is_home = str(match.get('homeTeam', {}).get('id')) == TEAM_ID
+            return {
+                "is_home": is_home,
+                "my_score": home_score if is_home else away_score,
+                "opp_score": away_score if is_home else home_score,
+                "match_id": match.get('id')
+            }
+        except Exception as e:
+            print(f"DEBUG: ⚠️ דילוג על תוצאה אחרונה: {e}", flush=True)
+            continue
+    return None
 
 
 def get_match_today(schedule_data):
@@ -975,30 +927,28 @@ def main():
                 f.write(f"history_{today_str}\n")
 
     # =====================================================
-    # 2. 🆕 ניהול לוח משחקים חכם
+    # 2. 🆕 ניהול לוח משחקים — one.co.il API (חינמי, ללא מכסה)
     # =====================================================
-    headers_api = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
     schedule_data = load_schedule()
+    team_data = fetch_team_data_from_one()
 
-    # ⚠️ קריאה ל-API רק אם באמת צריך (פעם בשבוע)
-    if needs_schedule_refresh(schedule_data):
-        new_matches = fetch_schedule_from_api(headers_api)
-        # 🛡️ חשוב: גם אם נכשלנו, נשמור last_update כדי לא לנסות שוב מיד!
-        # נחכה שבוע נוסף לפני ניסיון חוזר.
+    if team_data:
+        new_matches = parse_upcoming_matches(team_data)
         schedule_data["last_update"] = now_il.isoformat()
         if new_matches:
             schedule_data["matches"] = new_matches
-        elif not schedule_data.get("matches"):
-            # רק במקרה שאין לנו שום לוח - נשתמש בגיבוי
-            print("DEBUG: משתמש בלוח גיבוי", flush=True)
-            schedule_data["matches"] = {
-                d: {"opponent": opp, "match_time_iso": None, "match_id": None, "is_home": None}
-                for d, opp in BACKUP_SCHEDULE.items()
-            }
+        save_schedule(schedule_data)
+    elif not schedule_data.get("matches"):
+        # אין לוח שמור ו-API נופל → נשתמש בגיבוי קשיח
+        print("DEBUG: משתמש בלוח גיבוי", flush=True)
+        schedule_data["matches"] = {
+            d: {"opponent": opp, "match_time_iso": None, "match_id": None, "is_home": None}
+            for d, opp in BACKUP_SCHEDULE.items()
+        }
+        schedule_data["last_update"] = now_il.isoformat()
         save_schedule(schedule_data)
     else:
-        days_left = SCHEDULE_REFRESH_DAYS - (now_il - datetime.fromisoformat(schedule_data["last_update"])).days
-        print(f"DEBUG: ✅ לוח עדכני ({len(schedule_data['matches'])} משחקים, רענון בעוד ~{days_left} ימים)", flush=True)
+        print(f"DEBUG: ⚠️ one.co.il נפל — משתמש ב-cache ({len(schedule_data['matches'])} משחקים)", flush=True)
 
     # =====================================================
     # 3. 🆕 ניהול יום משחק - תזמון דינמי
@@ -1092,74 +1042,30 @@ def main():
                 if now_il.hour >= 18:
                     should_check_result = True
 
-            # ⚠️ קריאה ל-API לבדיקת התוצאה - רק אם הזמן הגיע!
+            # 🎯 בדיקת התוצאה — מ-team_data שכבר משכנו (אותה קריאה כמו ללוח)
             if should_check_result:
-                try:
-                    resp_last = requests.get(
-                        f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0",
-                        headers=headers_api, timeout=15
-                    )
-                    check_rapidapi_quota(resp_last)
-                    r_last = resp_last.json()
+                result = find_today_result(team_data, today_str) if team_data else None
+                if result:
+                    chant = random.choice(WIN_CHANTS)
+                    res_txt = f"{chant}\n\n*סיום המשחק:* הפועל {result['my_score']}, {opp_heb} {result['opp_score']}."
+                    markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": ONE_TABLE_URL}]]}
+                    if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
+                        with open("task_log.txt", 'a', encoding='utf-8') as f:
+                            f.write(f"final_{today_str}\n")
+                        print("DEBUG: ✅ נשלחה תוצאת המשחק", flush=True)
 
-                    if r_last.get('events'):
-                        last_ev = r_last['events'][0]
-                        ev_date = (datetime.fromtimestamp(last_ev['startTimestamp']) + timedelta(hours=3)).strftime('%Y-%m-%d')
-
-                        if ev_date == today_str:
-                            status_type = last_ev.get('status', {}).get('type', '')
-
-                            if status_type in ['finished', 'FT', 'ended']:
-                                # 🎯 המשחק נגמר - שולחים תוצאה ו-MVP
-                                is_home_actual = str(last_ev['homeTeam']['id']) == TEAM_ID
-                                my_score = last_ev['homeScore']['display'] if is_home_actual else last_ev['awayScore']['display']
-                                opp_score = last_ev['awayScore']['display'] if is_home_actual else last_ev['homeScore']['display']
-
-                                chant = random.choice(WIN_CHANTS)
-                                res_txt = f"{chant}\n\n*סיום המשחק:* הפועל {my_score}, {opp_heb} {opp_score}."
-                                markup = {"inline_keyboard": [[{"text": "📊 לטבלת הליגה", "url": ONE_TABLE_URL}]]}
-                                if send_telegram(res_txt, payload={"text": res_txt, "reply_markup": markup}):
-                                    with open("task_log.txt", 'a', encoding='utf-8') as f:
-                                        f.write(f"final_{today_str}\n")
-                                    print("DEBUG: ✅ נשלחה תוצאת המשחק", flush=True)
-
-                                # סקר MVP - מיד אחרי התוצאה (קוראים ל-API ללא ניידים)
-                                if f"mvp_{today_str}" not in tasks:
-                                    players_heb = DEFAULT_PLAYERS[:]
-                                    try:
-                                        event_id = last_ev.get('id')
-                                        if event_id:
-                                            resp_lineup = requests.get(
-                                                f"https://{RAPIDAPI_HOST}/api/v1/event/{event_id}/lineups",
-                                                headers=headers_api, timeout=10
-                                            )
-                                            check_rapidapi_quota(resp_lineup)
-                                            r_lineup = resp_lineup.json()
-                                            side = 'home' if is_home_actual else 'away'
-                                            players_raw = r_lineup.get(side, {}).get('players', [])
-                                            if players_raw:
-                                                players_heb = [
-                                                    PLAYER_MAP.get(p.get('player', {}).get('name', ''),
-                                                                   p.get('player', {}).get('name', ''))
-                                                    for p in players_raw[:10]
-                                                ]
-                                                print(f"DEBUG: ✅ קיבלתי {len(players_heb)} שחקנים מה-API", flush=True)
-                                    except Exception as e:
-                                        print(f"DEBUG lineup error: {e}", flush=True)
-
-                                    send_telegram(None, "sendPoll", {
-                                        "question": "מי ה-MVP של המשחק?",
-                                        "options": players_heb[:10],
-                                        "is_anonymous": False
-                                    })
-                                    with open("task_log.txt", 'a', encoding='utf-8') as f:
-                                        f.write(f"mvp_{today_str}\n")
-                                    print("DEBUG: ✅ נשלח סקר MVP", flush=True)
-                            else:
-                                # המשחק עדיין באוויר או טרם התחיל
-                                print(f"DEBUG: ⏳ המשחק עדיין לא הסתיים (status: {status_type})", flush=True)
-                except Exception as e:
-                    print(f"DEBUG match result error: {e}", flush=True)
+                    # סקר MVP — נשתמש ברשימת השחקנים הסטטית
+                    if f"mvp_{today_str}" not in tasks:
+                        send_telegram(None, "sendPoll", {
+                            "question": "מי ה-MVP של המשחק?",
+                            "options": DEFAULT_PLAYERS[:10],
+                            "is_anonymous": False
+                        })
+                        with open("task_log.txt", 'a', encoding='utf-8') as f:
+                            f.write(f"mvp_{today_str}\n")
+                        print("DEBUG: ✅ נשלח סקר MVP", flush=True)
+                else:
+                    print(f"DEBUG: ⏳ עדיין אין תוצאה זמינה ב-one.co.il ל-{today_str}", flush=True)
     else:
         if ENABLE_MATCHDAY_LOGIC:
             print(f"DEBUG: 🚫 אין משחק היום ({today_str})", flush=True)

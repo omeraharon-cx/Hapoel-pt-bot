@@ -35,7 +35,7 @@ Hapoel-pt-bot/
 
 - **Python 3** (no framework)
 - **Gemini API** (`gemini-2.0-flash`) — article summarization & topic relevance
-- **API-Football** via `sportapi7.p.rapidapi.com` (RapidAPI) — match schedule + results
+- **one.co.il public JSON API** (`/api/team/6`) — match schedule + recent results (free, no quota)
 - **Telegram Bot API** — message delivery
 - **googlenewsdecoder** (Python lib) — decodes Google News RSS encoded URLs
 - **feedparser**, **beautifulsoup4**, **lxml** — RSS parsing & HTML scraping
@@ -46,7 +46,8 @@ Hapoel-pt-bot/
 
 - `GEMINI_API_KEY` — Google AI Studio
 - `TELEGRAM_TOKEN` — BotFather token
-- `RAPIDAPI_KEY` — RapidAPI key for sportapi7
+
+(`RAPIDAPI_KEY` is no longer used — can be removed from GitHub Secrets.)
 
 ---
 
@@ -56,13 +57,12 @@ Hapoel-pt-bot/
 GEMINI_MODEL = "gemini-2.0-flash"   # Currently using 2.0-flash for fresh quota
 RUN_MODE = "ADMIN_ONLY"              # "ADMIN_ONLY" for testing, "BROADCAST" for production
 ENABLE_MATCHDAY_LOGIC = True
-SCHEDULE_REFRESH_DAYS = 7            # API-Football called weekly only
 HOURS_BEFORE_MATCH_FOR_BETTING = 3   # Betting poll sent 3h before kickoff
 MATCH_DURATION_MINUTES = 110         # When to start checking for results
 ```
 
 **Admin Telegram ID:** `425605110`
-**Team ID (sportapi7):** `5199`
+**Team ID (one.co.il):** `6`
 
 ---
 
@@ -106,17 +106,14 @@ The filter logic: if **only** Maccabi is mentioned (no Hapoel) → block. If bot
 
 ---
 
-## 💰 API Quota Management (CRITICAL!)
+## 💰 API Quota Management
 
-### API-Football (sportapi7 via RapidAPI)
-- **Monthly quota**: 100 calls (free tier)
-- **Strategy**:
-  - 1 call per **week** for schedule (`/team/{id}/events/next/10`)
-  - On match day only:
-    - 1 call when match expected to be over (~110 min after kickoff)
-    - 1 call for lineup if game finished
-- **Saved schedule** in `schedule.json` includes match time, ID, opponent
-- **Last update** timestamp prevents repeated retries on API failure
+### one.co.il (`/api/team/6`)
+- **Quota**: none (free public API)
+- **Strategy**: 1 call per run (~32/day). Same call serves both schedule and result lookup.
+- **Returns** `upcomingMatches` (next fixtures) + `recentMatches` (results with score, isStarted, lastEvent)
+- `schedule.json` is a **fallback cache** only — used when one.co.il is unavailable
+- `BACKUP_SCHEDULE` (hardcoded dict) is the last-resort fallback
 
 ### Gemini API
 - **Free tier**: 1500 RPD (requests per day)
@@ -135,8 +132,8 @@ The filter logic: if **only** Maccabi is mentioned (no Hapoel) → block. If bot
 |------|--------|--------|
 | 11:00+ | MatchDay message with random poster + opponent name | Local |
 | Match time -3h | Betting poll | Local time calc |
-| Match time +110min | Check API for result. If finished: send result + WIN_CHANTS | API call #1 |
-| Same as above | Fetch lineup, send MVP poll | API call #2 |
+| Match time +110min | Check `recentMatches` for today's score. If finished: send result + WIN_CHANTS | one.co.il (already fetched) |
+| Same as above | Send MVP poll with `DEFAULT_PLAYERS` | Static |
 
 ---
 
@@ -160,7 +157,8 @@ ONE.co.il direct RSS is broken (404) — accessed via Google News.
 - Switched walla feed/22 (general news) → feed/156 (Israeli football)
 - Added Maccabi PT blocklist (rival club)
 - Replaced Gemini-based duplicate detection with local Jaccard similarity
-- Smart API-Football scheduling: 1 call/week + match-day-only result check
+- **Replaced RapidAPI / API-Football with one.co.il public API** — free, no quota, single call serves schedule + results
+- Removed `TEAM_TRANSLATION` and `PLAYER_MAP` (one.co.il returns Hebrew natively)
 - Dynamic timing: betting 3h before match, results 110min after kickoff
 - Tone: journalistic-fan (warm but professional, no slang)
 - Fallback images from MATCHDAY_POSTERS when article has no image
@@ -170,7 +168,7 @@ ONE.co.il direct RSS is broken (404) — accessed via Google News.
 
 ## 🐛 Known Issues / Things to Watch
 
-- API-Football monthly quota — was exhausted in 2 days when called every run; now should last whole month
+- one.co.il is an unofficial public API — if they change the JSON shape, schedule/results break. Admin gets a one-time daily alert via `one_api_down` marker. `BACKUP_SCHEDULE` + cached `schedule.json` keep things going.
 - Gemini daily quota — can run out if too many articles to process (mitigated by `GEMINI_QUOTA_EXCEEDED` flag)
 - Some Google News links may fail to decode — those articles are skipped
 
@@ -182,7 +180,6 @@ ONE.co.il direct RSS is broken (404) — accessed via Google News.
 # Set environment variables
 export GEMINI_API_KEY="your_key"
 export TELEGRAM_TOKEN="your_token"
-export RAPIDAPI_KEY="your_key"
 
 # Make sure RUN_MODE = "ADMIN_ONLY" in bot.py for safe testing!
 
