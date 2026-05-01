@@ -26,3 +26,5 @@ matchday_2026-04-25
 betting_2026-04-25
 matchday_2026-04-28
 betting_2026-04-28
+alert_rapidapi_low_2026-05-01
+alert_gemini_exceeded_2026-05-01
