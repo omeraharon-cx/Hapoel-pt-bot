@@ -439,6 +439,104 @@ def send_telegram(text, method="sendMessage", payload=None):
 # אם True - נחזיר None לכל הקריאות הבאות בריצה הזו, חוסך זמן וטוקנים
 GEMINI_QUOTA_EXCEEDED = False
 
+# =====================================================
+# 🆕 ניטור מכסות API + התראות לאדמין
+# =====================================================
+GEMINI_USAGE_FILE = "gemini_usage.txt"
+GEMINI_DAILY_LIMIT = 1500
+GEMINI_ALERT_THRESHOLD = 1200  # 80% — אלרט מקדים
+RAPIDAPI_ALERT_THRESHOLD = 15  # קריאות שנותרו בחודש
+
+
+def send_admin_alert(msg):
+    """שולח התראה רק לאדמין, ללא תלות ב-RUN_MODE"""
+    if not TELEGRAM_TOKEN:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(
+            url,
+            json={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=15
+        )
+        print(f"DEBUG: 📨 נשלחה התראת אדמין", flush=True)
+    except Exception as e:
+        print(f"DEBUG: שגיאה בשליחת התראת אדמין: {e}", flush=True)
+
+
+def already_alerted_today(alert_type):
+    """בודק ב-task_log.txt אם כבר שלחנו התראה מסוג כזה היום (מניעת ספאם)"""
+    today = get_israel_time().strftime('%Y-%m-%d')
+    marker = f"alert_{alert_type}_{today}"
+    if not os.path.exists("task_log.txt"):
+        return False
+    try:
+        with open("task_log.txt", 'r', encoding='utf-8') as f:
+            return marker in f.read()
+    except Exception:
+        return False
+
+
+def mark_alerted_today(alert_type):
+    today = get_israel_time().strftime('%Y-%m-%d')
+    marker = f"alert_{alert_type}_{today}"
+    try:
+        with open("task_log.txt", 'a', encoding='utf-8') as f:
+            f.write(marker + "\n")
+    except Exception as e:
+        print(f"DEBUG: שגיאה בסימון התראה: {e}", flush=True)
+
+
+def increment_gemini_usage():
+    """מגדיל את מונה השימוש היומי של Gemini ומחזיר את הסכום החדש.
+    הקובץ מכיל שורה אחת בפורמט: YYYY-MM-DD|count.
+    אם התאריך השמור הוא לא היום - מתאפס."""
+    today = get_israel_time().strftime('%Y-%m-%d')
+    count = 0
+    if os.path.exists(GEMINI_USAGE_FILE):
+        try:
+            with open(GEMINI_USAGE_FILE, 'r', encoding='utf-8') as f:
+                line = f.read().strip()
+            if line and '|' in line:
+                date_str, count_str = line.split('|', 1)
+                if date_str == today:
+                    count = int(count_str)
+        except Exception:
+            count = 0
+    count += 1
+    try:
+        with open(GEMINI_USAGE_FILE, 'w', encoding='utf-8') as f:
+            f.write(f"{today}|{count}\n")
+    except Exception as e:
+        print(f"DEBUG: שגיאה בעדכון מונה Gemini: {e}", flush=True)
+    return count
+
+
+def check_rapidapi_quota(response):
+    """בודק את הכותרות של RapidAPI ושולח התראה אם נשארו פחות מהסף"""
+    try:
+        remaining_h = response.headers.get('x-ratelimit-requests-remaining')
+        limit_h = response.headers.get('x-ratelimit-requests-limit')
+        if remaining_h is None:
+            return
+        remaining = int(remaining_h)
+        limit_str = f"/{limit_h}" if limit_h else ""
+        print(f"DEBUG: 📊 RapidAPI: {remaining}{limit_str} קריאות נותרו החודש", flush=True)
+
+        if remaining <= RAPIDAPI_ALERT_THRESHOLD and not already_alerted_today("rapidapi_low"):
+            msg = (
+                f"⚠️ *התראת מכסה: API-Football*\n\n"
+                f"נותרו רק *{remaining}{limit_str}* קריאות בחודש הזה.\n\n"
+                f"*הצעות פתרון:*\n"
+                f"1. להמתין לאיפוס בתחילת החודש הבא.\n"
+                f"2. לעצור זמנית את לוגיקת המשחק: שנה ב-bot.py את `ENABLE_MATCHDAY_LOGIC = False`.\n"
+                f"3. לשדרג חבילה ב-RapidAPI אם רוצים להמשיך החודש."
+            )
+            send_admin_alert(msg)
+            mark_alerted_today("rapidapi_low")
+    except Exception as e:
+        print(f"DEBUG: שגיאה בבדיקת מכסת RapidAPI: {e}", flush=True)
+
 
 def call_gemini(prompt, timeout=30, label="generic"):
     """קריאה ל-Gemini API"""
@@ -472,6 +570,16 @@ def call_gemini(prompt, timeout=30, label="generic"):
         if res.status_code == 429:
             print(f"  [GEMINI:{label}] 🛑 חריגה ממכסת Gemini! מסמן שלא לנסות שוב בריצה זו.", flush=True)
             GEMINI_QUOTA_EXCEEDED = True
+            if not already_alerted_today("gemini_exceeded"):
+                send_admin_alert(
+                    "🛑 *חריגה ממכסת Gemini היומית!*\n\n"
+                    "הריצה הנוכחית הפסיקה לקרוא ל-Gemini עד שהמכסה תתאפס.\n\n"
+                    "*הצעות פתרון:*\n"
+                    "1. להמתין לאיפוס יומי ב-03:00 בבוקר (חצות UTC).\n"
+                    "2. להחליף זמנית מודל ב-`GEMINI_MODEL` למודל קל יותר.\n"
+                    "3. להפחית כמות כתבות לריצה (כיום עד 8)."
+                )
+                mark_alerted_today("gemini_exceeded")
             return None
 
         if res.status_code != 200:
@@ -494,6 +602,20 @@ def call_gemini(prompt, timeout=30, label="generic"):
 
         if DEBUG_GEMINI:
             print(f"  [GEMINI:{label}] 📥 קיבל ({len(result)} תווים): {result[:300]}", flush=True)
+
+        # 🆕 ספירת שימוש יומי ואלרט מקדים על 80% מהמכסה
+        usage = increment_gemini_usage()
+        if usage >= GEMINI_ALERT_THRESHOLD and not already_alerted_today("gemini_warn"):
+            send_admin_alert(
+                f"⚠️ *התראת מכסה: Gemini*\n\n"
+                f"נוצלו *{usage}/{GEMINI_DAILY_LIMIT}* קריאות יומיות "
+                f"({int(usage * 100 / GEMINI_DAILY_LIMIT)}%).\n\n"
+                f"*הצעות פתרון:*\n"
+                f"1. להמתין לאיפוס יומי ב-03:00 בבוקר.\n"
+                f"2. להחליף זמנית מודל ב-`GEMINI_MODEL` למודל קל יותר.\n"
+                f"3. להפחית כמות כתבות לריצה (כיום עד 8)."
+            )
+            mark_alerted_today("gemini_warn")
 
         return result
 
@@ -758,10 +880,12 @@ def fetch_schedule_from_api(headers_api):
     """
     print("DEBUG: 📅 מעדכן לוח משחקים מה-API (פעם בשבוע)", flush=True)
     try:
-        r_sched = requests.get(
+        resp_sched = requests.get(
             f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/next/10",
             headers=headers_api, timeout=15
-        ).json()
+        )
+        check_rapidapi_quota(resp_sched)
+        r_sched = resp_sched.json()
 
         if 'events' in r_sched and r_sched['events']:
             new_matches = {}
@@ -971,10 +1095,12 @@ def main():
             # ⚠️ קריאה ל-API לבדיקת התוצאה - רק אם הזמן הגיע!
             if should_check_result:
                 try:
-                    r_last = requests.get(
+                    resp_last = requests.get(
                         f"https://{RAPIDAPI_HOST}/api/v1/team/{TEAM_ID}/events/last/0",
                         headers=headers_api, timeout=15
-                    ).json()
+                    )
+                    check_rapidapi_quota(resp_last)
+                    r_last = resp_last.json()
 
                     if r_last.get('events'):
                         last_ev = r_last['events'][0]
@@ -1003,10 +1129,12 @@ def main():
                                     try:
                                         event_id = last_ev.get('id')
                                         if event_id:
-                                            r_lineup = requests.get(
+                                            resp_lineup = requests.get(
                                                 f"https://{RAPIDAPI_HOST}/api/v1/event/{event_id}/lineups",
                                                 headers=headers_api, timeout=10
-                                            ).json()
+                                            )
+                                            check_rapidapi_quota(resp_lineup)
+                                            r_lineup = resp_lineup.json()
                                             side = 'home' if is_home_actual else 'away'
                                             players_raw = r_lineup.get(side, {}).get('players', [])
                                             if players_raw:
