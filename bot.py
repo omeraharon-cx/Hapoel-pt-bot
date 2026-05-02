@@ -908,7 +908,7 @@ def main():
     print(f"DEBUG: googlenewsdecoder מותקן? {HAS_GNEWS_DECODER}", flush=True)
 
     # וידוא קיום קבצי מערכת
-    for fname in ["seen_links.txt", "task_log.txt", "recent_summaries.txt", "schedule.json"]:
+    for fname in ["seen_links.txt", "task_log.txt", "recent_summaries.txt", "schedule.json", "gemini_usage.txt"]:
         if not os.path.exists(fname):
             open(fname, 'a', encoding='utf-8').close()
 
