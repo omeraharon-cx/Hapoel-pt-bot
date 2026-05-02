@@ -986,7 +986,7 @@ def main():
             md_text += (
                 f".\n"
                 f"יאללה הפועל, לתת הכל בשביל הסמל! 🚀\n\n"
-                f"כשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
+                f"שהשחקנים למגרש עולים - כל האוהדים שריםםםם\n"
                 f"הפועל עולה עולההה, הפועל, הפועל עולהה 💙"
             )
             if send_telegram(None, "sendPhoto", {"photo": random.choice(MATCHDAY_POSTERS), "caption": md_text}):
