@@ -779,27 +779,35 @@ def fetch_team_data_from_one():
     """
     🎯 מביא את כל נתוני הקבוצה מ-one.co.il (חינמי, ללא מכסה).
     מחזיר dict עם upcomingMatches, recentMatches, squad, וכו' — או None בשגיאה.
+    מנסה עד 2 פעמים עם timeout נדיב, כדי לא להיתפס על blip חולף.
     """
     print("DEBUG: 📡 קורא ל-one.co.il API", flush=True)
-    try:
-        resp = requests.get(
-            ONE_API_URL,
-            headers={'User-Agent': 'Mozilla/5.0'},
-            timeout=15
-        )
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        print(f"DEBUG: ❌ שגיאה בגישה ל-one.co.il: {e}", flush=True)
-        if not already_alerted_today("one_api_down"):
-            send_admin_alert(
-                "⚠️ *one.co.il API לא זמין*\n\n"
-                f"שגיאה: `{e}`\n\n"
-                "המערכת תשתמש בלוח cache או ב-`BACKUP_SCHEDULE`. "
-                "כדאי לבדוק שהמבנה לא השתנה."
+    last_err = None
+    for attempt in (1, 2):
+        try:
+            resp = requests.get(
+                ONE_API_URL,
+                headers={'User-Agent': 'Mozilla/5.0'},
+                timeout=25
             )
-            mark_alerted_today("one_api_down")
-        return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            last_err = e
+            print(f"DEBUG: ⚠️ ניסיון {attempt}/2 נכשל: {e}", flush=True)
+            if attempt == 1:
+                time.sleep(3)
+
+    print(f"DEBUG: ❌ כל הניסיונות נכשלו: {last_err}", flush=True)
+    if not already_alerted_today("one_api_down"):
+        send_admin_alert(
+            "⚠️ *one.co.il API לא זמין*\n\n"
+            f"שגיאה: `{last_err}`\n\n"
+            "המערכת תשתמש בלוח cache או ב-`BACKUP_SCHEDULE`. "
+            "כדאי לבדוק שהמבנה לא השתנה."
+        )
+        mark_alerted_today("one_api_down")
+    return None
 
 
 def parse_upcoming_matches(team_data):
