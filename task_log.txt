@@ -29,3 +29,4 @@ betting_2026-04-28
 alert_rapidapi_low_2026-05-01
 alert_gemini_exceeded_2026-05-01
 alert_gemini_exceeded_2026-05-02
+alert_one_api_down_2026-05-02
