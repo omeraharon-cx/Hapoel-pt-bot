@@ -34,7 +34,7 @@ Hapoel-pt-bot/
 ## 🔧 Tech Stack
 
 - **Python 3** (no framework)
-- **Gemini API** (`gemini-2.0-flash`) — article summarization & topic relevance
+- **Gemini API** (`gemini-2.5-flash`) — article summarization & topic relevance
 - **one.co.il public JSON API** (`/api/team/6`) — match schedule + recent results (free, no quota)
 - **Telegram Bot API** — message delivery
 - **googlenewsdecoder** (Python lib) — decodes Google News RSS encoded URLs
@@ -54,7 +54,7 @@ Hapoel-pt-bot/
 ## 🎛️ Key Configuration (top of bot.py)
 
 ```python
-GEMINI_MODEL = "gemini-2.0-flash"   # Currently using 2.0-flash for fresh quota
+GEMINI_MODEL = "gemini-2.5-flash"   # 2.0-flash had its free tier dropped to 0 in May 2026
 RUN_MODE = "ADMIN_ONLY"              # "ADMIN_ONLY" for testing, "BROADCAST" for production
 ENABLE_MATCHDAY_LOGIC = True
 HOURS_BEFORE_MATCH_FOR_BETTING = 3   # Betting poll sent 3h before kickoff
@@ -116,8 +116,9 @@ The filter logic: if **only** Maccabi is mentioned (no Hapoel) → block. If bot
 - `BACKUP_SCHEDULE` (hardcoded dict) is the last-resort fallback
 
 ### Gemini API
-- **Free tier**: 1500 RPD (requests per day)
-- **Resets**: 00:00 UTC = 3:00 AM Israel
+- **Free tier**: per-model, varies (check https://ai.google.dev/gemini-api/docs/rate-limits)
+- **Resets**: midnight Pacific Time = 10:00 AM Israel (PDT) / 11:00 AM Israel (PST)
+- ⚠️ `gemini-2.0-flash` was dropped from free tier (limit: 0) in May 2026 — code now uses `gemini-2.5-flash`
 - **Optimizations**:
   - `topic-check` skipped when title clearly mentions full Hapoel PT name
   - `dup-check` is local Jaccard similarity (no Gemini)

@@ -33,10 +33,10 @@ ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=2
 # מודל Gemini
 # 🆕 שדרוג ל-gemini-2.0-flash - אותה מכסה אבל מודל יותר חכם
 # אופציות:
-#   "gemini-2.5-flash-lite" - הכי זול אבל מכסה קטנה
-#   "gemini-2.0-flash" - מאוזן (מומלץ! ✅)
-#   "gemini-2.5-flash" - יותר חזק, אותה מכסה
-GEMINI_MODEL = "gemini-2.0-flash"
+#   "gemini-2.5-flash-lite" - הכי זול, מכסה קטנה (גיבוי אם 2.5-flash נסגר)
+#   "gemini-2.5-flash" - מאוזן, ב-free tier (מומלץ! ✅)
+#   "gemini-2.0-flash" - ❌ הוצא מ-free tier (limit: 0) במאי 2026
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # =====================================================
 # 🎛️  מתג מצב הפעלה
@@ -499,7 +499,7 @@ def call_gemini(prompt, timeout=30, label="generic"):
                     "🛑 *חריגה ממכסת Gemini היומית!*\n\n"
                     "הריצה הנוכחית הפסיקה לקרוא ל-Gemini עד שהמכסה תתאפס.\n\n"
                     "*הצעות פתרון:*\n"
-                    "1. להמתין לאיפוס יומי ב-03:00 בבוקר (חצות UTC).\n"
+                    "1. להמתין לאיפוס יומי ב-10:00 בבוקר (חצות PT).\n"
                     "2. להחליף זמנית מודל ב-`GEMINI_MODEL` למודל קל יותר.\n"
                     "3. להפחית כמות כתבות לריצה (כיום עד 8)."
                 )
@@ -535,7 +535,7 @@ def call_gemini(prompt, timeout=30, label="generic"):
                 f"נוצלו *{usage}/{GEMINI_DAILY_LIMIT}* קריאות יומיות "
                 f"({int(usage * 100 / GEMINI_DAILY_LIMIT)}%).\n\n"
                 f"*הצעות פתרון:*\n"
-                f"1. להמתין לאיפוס יומי ב-03:00 בבוקר.\n"
+                f"1. להמתין לאיפוס יומי ב-10:00 בבוקר (חצות PT).\n"
                 f"2. להחליף זמנית מודל ב-`GEMINI_MODEL` למודל קל יותר.\n"
                 f"3. להפחית כמות כתבות לריצה (כיום עד 8)."
             )
