@@ -34,3 +34,4 @@ matchday_2026-05-02
 betting_2026-05-02
 alert_gemini_exceeded_2026-05-03
 alert_one_api_down_2026-05-03
+alert_gemini_exceeded_2026-05-04
