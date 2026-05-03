@@ -492,7 +492,7 @@ def call_gemini(prompt, timeout=30, label="generic"):
 
         # 🆕 טיפול ב-429 - מכסה הסתיימה
         if res.status_code == 429:
-            print(f"  [GEMINI:{label}] 🛑 חריגה ממכסת Gemini! מסמן שלא לנסות שוב בריצה זו.", flush=True)
+            print(f"  [GEMINI:{label}] 🛑 429 מ-Gemini. גוף התשובה: {res.text[:800]}", flush=True)
             GEMINI_QUOTA_EXCEEDED = True
             if not already_alerted_today("gemini_exceeded"):
                 send_admin_alert(
