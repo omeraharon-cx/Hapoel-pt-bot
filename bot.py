@@ -126,19 +126,6 @@ MACCABI_PT_PLAYERS = [
     "אור ישראלוב",
 ]
 
-# קבוצות אחרות בליגה שאם מופיעות בכותרת לצד הפועל פ"ת -
-# נריץ topic-check ב-Gemini במקום להניח שהכתבה עוסקת בהפועל פ"ת.
-# (הימנעות מבלבול: "הפועל" לבדה לא נכללת כדי לא לתפוס את הפועל פ"ת עצמה)
-OTHER_LEAGUE_TEAMS_KEYS = [
-    "מכבי חיפה", "מכבי ת\"א", "מכבי תל אביב", "מכבי ת'א",
-    "מכבי נתניה", "מכבי בני ריינה",
-    "הפועל ב\"ש", "הפועל באר שבע", "הפועל ב'ש",
-    "הפועל ת\"א", "הפועל תל אביב", "הפועל ת'א",
-    "הפועל חיפה", "הפועל ירושלים", "הפועל חדרה",
-    "בית\"ר ירושלים", "בית\"ר י\"ם", "בית'ר ירושלים", "ביתר ירושלים",
-    "בני סכנין", "מ.ס. אשדוד", "מס אשדוד",
-]
-
 # מקורות RSS
 RSS_SOURCES = [
     {
@@ -633,60 +620,47 @@ def get_ai_summary(title, content, is_official=False):
     return summary
 
 
-def is_duplicate_content(new_text, recent_summaries):
+def is_same_message_as_recent(title, content, recent_summaries):
     """
-    🆕 בודק כפילות תוכן באמצעות חישוב דמיון מקומי (ללא Gemini!)
-    חיסכון של עשרות קריאות API ביום.
-    משווה את הטקסט החדש (כותרת + תחילת הכתבה) מול הסיכומים האחרונים.
-    טקסט ארוך משאיר יותר אותות (שמות שחקנים, תוצאה, יריבה) ותופס
-    כפילויות גם כשאתרים שונים מנסחים את אותה כתבה במילים אחרות.
+    בודק עם Gemini אם הכתבה החדשה מעבירה את אותו מסר/אירוע כמו אחת
+    מהכתבות שכבר נשלחו לאחרונה — גם אם האתר אחר והניסוח שונה.
+    אם Gemini לא זמין (מכסה/שגיאה) — לא חוסמים, מעדיפים לשלוח על פני להחמיץ.
     """
+    if not GEMINI_API_KEY:
+        return False
     if not recent_summaries.strip() or len(recent_summaries) < 50:
         return False
 
-    # ניקוי מילות חיבור נפוצות שלא מועילות לזיהוי כפילות
-    stop_words = {
-        "של", "על", "את", "אם", "מה", "כי", "זה", "לא", "גם", "עם", "אבל",
-        "או", "כך", "רק", "כן", "כל", "הוא", "היא", "אני", "אתה", "אנחנו",
-        "the", "a", "an", "and", "or", "but", "to", "of", "in", "on"
-    }
+    # רק 5 הסיכומים האחרונים — מספיק כדי לתפוס סיקור של אותו אירוע מאתרים שונים
+    # (כתבות חוזרות מתפזרות בטווח של שעות, לא ימים).
+    summaries = [s.strip() for s in recent_summaries.split("|||")[-5:] if s.strip()]
+    if not summaries:
+        return False
 
-    def tokenize(text):
-        """מחלץ מילים משמעותיות מטקסט"""
-        # הסרת סימני פיסוק והפיכה ל-lowercase
-        cleaned = ''.join(c if c.isalnum() or c.isspace() else ' ' for c in text.lower())
-        words = cleaned.split()
-        return set(w for w in words if len(w) >= 3 and w not in stop_words)
+    numbered = "\n".join(f"{i+1}. {s[:400]}" for i, s in enumerate(summaries))
 
-    new_words = tokenize(new_text)
-    if len(new_words) < 3:
-        return False  # טקסט קצר מדי לבדיקה
+    prompt = (
+        "אתה עוזר לסנן כתבות שלא יישלחו פעמיים לערוץ אוהדים.\n\n"
+        "הכתבה החדשה:\n"
+        f"כותרת: {title}\n"
+        f"תוכן: {content[:1200]}\n\n"
+        "תקצירי כתבות שכבר נשלחו לאחרונה:\n"
+        f"{numbered}\n\n"
+        "האם הכתבה החדשה מעבירה את אותו מסר מרכזי כמו אחת מהכתבות שכבר נשלחו?\n"
+        "- 'אותו מסר' = סיקור של אותו אירוע יחיד (אותו משחק, אותה החתמה, אותה החלטה).\n"
+        "  גם אם הניסוח שונה והאתר שונה — זה עדיין אותו מסר.\n"
+        "- 'מסר שונה' = אירוע אחר. למשל:\n"
+        "  * תקציר משחק מול ראיון אחרי המשחק = שונה\n"
+        "  * הכרזה על החתמה מול תקציר משחק = שונה\n"
+        "  * תחזית/סקירה לפני משחק מול תוצאה אחרי המשחק = שונה\n"
+        "  * שני משחקים שונים של אותה הקבוצה = שונה\n\n"
+        "ענה YES אם הכתבה החדשה זהה במסר לאחת מהכתבות, NO אם המסר שלה ייחודי."
+    )
 
-    # מפצלים את הסיכומים האחרונים (האחרונים 5)
-    summaries = recent_summaries.split("|||")[-5:]
-
-    for prev_summary in summaries:
-        if not prev_summary.strip():
-            continue
-        prev_words = tokenize(prev_summary)
-        if len(prev_words) < 3:
-            continue
-
-        # חישוב דמיון Jaccard (חיתוך / איחוד)
-        intersection = new_words & prev_words
-        union = new_words | prev_words
-        if not union:
-            continue
-
-        similarity = len(intersection) / len(union)
-        # 40%+ מילים זהות = אותה כתבה (השוואה על טקסט ארוך מאפשרת סף נמוך יותר)
-        if similarity >= 0.4:
-            if DEBUG_VERBOSE:
-                shared = ', '.join(list(intersection)[:5])
-                print(f"DEBUG:   זוהתה כפילות מקומית (דמיון {similarity:.0%}, מילים: {shared})", flush=True)
-            return True
-
-    return False
+    answer = call_gemini(prompt, timeout=20, label="dup-check")
+    if not answer:
+        return False
+    return "YES" in answer.upper()
 
 
 def extract_article_data(url):
@@ -1243,39 +1217,24 @@ def main():
                         stats["filtered_not_relevant"] += 1
                         continue
 
-                # 🎯 בדיקה: הפועל פ"ת היא הנושא העיקרי?
-                # חיסכון בקריאת Gemini: דילוג רק אם הכותרת ברורה *ולא* מזכירה
-                # קבוצה אחרת. אם מופיעה גם הפועל פ"ת וגם יריבה - הכותרת דו-משמעית
-                # והכתבה עלולה להיות בעצם על היריבה (למשל החלטות הרכב של בכר).
+                # 🎯 הפועל פ"ת היא הנושא העיקרי? תמיד נשאל את Gemini -
+                # קיצור-דרך לפי כותרת החטיא כתבות על יריבות שמזכירות "הפועל פ"ת"
+                # רק כקונטקסט (למשל "ברק בכר הבטיח: כיוף יפתח מול הפועל פ"ת").
                 if not is_official:
-                    title_lower = title.lower()
-                    title_has_clear_mention = any(
-                        clear_key in title_lower for clear_key in [
-                            "הפועל פתח תקווה", "הפועל פתח תקוה", "הפועל פתח-תקוה",
-                            "הפועל פ\"ת", "הפועל פ'ת"
-                        ]
-                    )
-                    title_mentions_other_team = any(
-                        other.lower() in title_lower for other in OTHER_LEAGUE_TEAMS_KEYS
-                    )
-                    can_skip_topic_check = title_has_clear_mention and not title_mentions_other_team
-
-                    if not can_skip_topic_check:
-                        if not is_article_main_topic_hapoel_pt(title, content):
-                            if DEBUG_VERBOSE:
-                                print(f"DEBUG:   ⏭️ הפועל פ\"ת לא הנושא העיקרי", flush=True)
-                            stats["filtered_not_main_topic"] += 1
-                            continue
-                    else:
+                    if not is_article_main_topic_hapoel_pt(title, content):
                         if DEBUG_VERBOSE:
-                            print(f"DEBUG:   ✓ כותרת ברורה ויחידאית - דילוג על topic-check", flush=True)
+                            print(f"DEBUG:   ⏭️ הפועל פ\"ת לא הנושא העיקרי", flush=True)
+                        stats["filtered_not_main_topic"] += 1
+                        continue
 
-                # השוואה על טקסט ארוך (כותרת + תחילת הכתבה) מול סיכומים קודמים -
-                # תופס סיקור של אותו אירוע מאתרים שונים גם כשהניסוח שונה.
-                dedup_text = title + " " + (content[:1500] if content else "")
-                if is_duplicate_content(dedup_text, recent_sums):
-                    print(f"DEBUG:   ⏭️ כפילות תוכן", flush=True)
+                # ⏭️ אותו אירוע סוקר כבר? (sondaging Gemini על המסר, לא על המילים)
+                if is_same_message_as_recent(title, content, recent_sums):
+                    print(f"DEBUG:   ⏭️ אותו מסר כבר נשלח", flush=True)
                     stats["filtered_duplicate_content"] += 1
+                    # מסמנים את ה-URL כ"נראה" כדי שלא נריץ עליו Gemini שוב כל ריצה
+                    history.add(clean_l)
+                    with open("seen_links.txt", 'a', encoding='utf-8') as f:
+                        f.write(clean_l + "\n")
                     continue
 
                 summary = get_ai_summary(title, content, is_official=is_official)
