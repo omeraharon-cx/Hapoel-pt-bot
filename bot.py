@@ -598,19 +598,38 @@ def is_article_main_topic_hapoel_pt(title, content):
     return "YES" in answer.upper()
 
 
-def get_ai_summary(title, content, is_official=False):
+def get_ai_summary(title, content, is_official=False, today_he=None, next_match_he=None):
     """מחזיר תקציר עיתונאי"""
     if not content and not title:
         return None
     if len(content) < 80:
         return title if title else None
 
+    time_ctx_lines = []
+    if today_he:
+        time_ctx_lines.append(f"היום: {today_he}.")
+    if next_match_he:
+        time_ctx_lines.append(f"המשחק הקרוב של הפועל פ\"ת: {next_match_he}.")
+    time_ctx = ("📅 הקשר זמן (אמת קרקע - השתמש בו, לא במה שמשתמע מהכתבה):\n"
+                + "\n".join(time_ctx_lines) + "\n\n") if time_ctx_lines else ""
+
+    timing_rule = (
+        "🚫 כללי תזמון נוקשים:\n"
+        "• אסור להמציא או להסיק פרטי תזמון. אל תכתוב 'הערב', 'מחר', 'בקרוב', 'הסופ\"ש' "
+        "אלא אם זה תואם להקשר הזמן שניתן לעיל.\n"
+        "• מילים כמו 'מחר'/'הערב' שמופיעות בכתבה מתייחסות לתאריך פרסום הכתבה, לא להיום שלך. "
+        "אל תעתיק אותן כמו שהן.\n"
+        "• אם אין ודאות לגבי התזמון, השתמש בניסוחים נייטרליים כמו 'במשחק הקרוב' / 'במחזור הבא' "
+        "במקום זמן ספציפי.\n\n"
+    )
+
     if is_official:
         prompt = (
+            time_ctx + timing_rule +
             "אתה כתב ספורט אוהד של הפועל פתח תקווה, שכותב לערוץ עדכונים של אוהדי הקבוצה. "
             "סכם את הודעת המועדון הבאה ב-4-5 משפטים בטון עיתונאי-אוהד: "
             "מקצועי ומדויק מצד אחד, אבל עם נימה חמה וקלילה של מי שאוהב את הקבוצה - לא ניטרלי קר. "
-            "שמור על פרטים קונקרטיים שמופיעים בטקסט: תאריך/שעת המשחק, היריבה, מצב פציעות, "
+            "שמור על פרטים קונקרטיים שמופיעים בטקסט: היריבה, מצב פציעות, "
             "ושלב את ציטוט מרכזי אחד מהמאמן או השחקן אם מופיע בכתבה (במרכאות, קצר ומדויק). "
             "הימנע מסלנג שכונתי, ביטויי הגזמה ('מטורף!', 'אדיר!') או קלישאות. "
             "אפשר להשתמש בכינויי חיבה כמו 'הכחולים' או 'חבורתו של עומר פרץ' כשמתאים. "
@@ -621,6 +640,7 @@ def get_ai_summary(title, content, is_official=False):
         )
     else:
         prompt = (
+            time_ctx + timing_rule +
             "אתה כתב ספורט אוהד של הפועל פתח תקווה, שכותב לערוץ עדכונים של אוהדי הקבוצה. "
             "כתוב תקציר של 4-5 משפטים על הכתבה הבאה, "
             "תוך התמקדות בזווית הקשורה להפועל פתח תקווה. "
@@ -939,6 +959,62 @@ def get_match_today(schedule_data):
     return None
 
 
+HEB_WEEKDAY_NAMES = {
+    0: "שני", 1: "שלישי", 2: "רביעי",
+    3: "חמישי", 4: "שישי", 5: "שבת", 6: "ראשון"
+}
+
+
+def format_today_he():
+    """תיאור עברי של היום, למשל 'יום ראשון, 4/5/2026'."""
+    now = get_israel_time()
+    return f"יום {HEB_WEEKDAY_NAMES[now.weekday()]}, {now.day}/{now.month}/{now.year}"
+
+
+def get_next_match_info(schedule_data):
+    """תיאור עברי של המשחק הקרוב ('היום'/'מחר'/יום בשבוע) או None אם אין."""
+    today_str = get_israel_time().strftime('%Y-%m-%d')
+    matches = (schedule_data or {}).get("matches", {})
+    if not matches:
+        return None
+    upcoming = sorted(d for d in matches.keys() if d >= today_str)
+    if not upcoming:
+        return None
+    next_date = upcoming[0]
+    raw = matches[next_date]
+    if isinstance(raw, str):
+        opponent, iso = raw, None
+    else:
+        opponent = raw.get("opponent", "?")
+        iso = raw.get("match_time_iso")
+    try:
+        d_obj = datetime.strptime(next_date, '%Y-%m-%d').date()
+        today_obj = datetime.strptime(today_str, '%Y-%m-%d').date()
+        delta = (d_obj - today_obj).days
+    except Exception:
+        d_obj, delta = None, -1
+    if delta == 0:
+        when = "היום"
+    elif delta == 1:
+        when = "מחר"
+    elif delta == 2:
+        when = "מחרתיים"
+    elif d_obj and 0 < delta < 7:
+        when = f"ביום {HEB_WEEKDAY_NAMES[d_obj.weekday()]} ({d_obj.day}/{d_obj.month})"
+    elif d_obj:
+        when = f"ב-{d_obj.day}/{d_obj.month}/{d_obj.year}"
+    else:
+        when = next_date
+    time_str = ""
+    if iso:
+        try:
+            dt = datetime.fromisoformat(iso)
+            time_str = f" בשעה {dt.strftime('%H:%M')}"
+        except Exception:
+            pass
+    return f"{when}{time_str} מול {opponent}"
+
+
 # =====================================================
 # --- לוגיקה מרכזית ---
 # =====================================================
@@ -969,15 +1045,32 @@ def main():
     print(f"DEBUG: {len(history)} לינקים בהיסטוריה", flush=True)
 
     # =====================================================
-    # 1. פינת ההיסטוריה - יום ד' שעה 12
+    # 1. פינת ההיסטוריה - הריצה הראשונה ביום ד' אחרי 12:00 IL
+    # (פעם אחת בשבוע - הסימון ב-task_log שומר על זה)
     # =====================================================
-    if now_il.weekday() == 2 and now_il.hour == 12 and f"history_{today_str}" not in tasks:
-        fact = call_gemini(
-            "כתוב 2 עובדות היסטוריות קצרות ומעניינות על הפועל פתח תקווה (לא מכבי פתח תקווה!). "
-            "אחת משנות ה-50 ואחת משנות ה-90. הוסף אימוג'ים מתאימים.",
-            label="history-fact"
+    HISTORY_CORNER_MIN_HOUR = 12  # IL
+    if (now_il.weekday() == 2
+            and now_il.hour >= HISTORY_CORNER_MIN_HOUR
+            and f"history_{today_str}" not in tasks):
+        today_he_for_history = format_today_he()
+        fact_prompt = (
+            f"היום {today_he_for_history}. "
+            f"כתוב פינה היסטורית בלעדית על הפועל פתח תקווה (לא מכבי פתח תקווה - קבוצה אחרת לגמרי!), "
+            f"לערוץ אוהדים בטלגרם.\n\n"
+            f"כלול שלוש (3) עובדות היסטוריות מעניינות, מדויקות וזכירות שראויות לציון לדורות.\n"
+            f"אם אפשר, נסה ש-1 מהעובדות תהיה קשורה לתקופת השנה/השבוע הנוכחיים בהיסטוריית הקבוצה — "
+            f"משחק מפורסם שקרה בחודש/בשבוע הזה, הישג, שיא, או יום הולדת/פטירה של אגדת מועדון.\n\n"
+            f"נושאים מתאימים (לבחור מהם): אליפויות וגביעי מדינה, ניצחונות גדולים "
+            f"(במיוחד נגד יריבות גדולות כמו מכבי ת\"א, הפועל ת\"א, בית\"ר ירושלים), "
+            f"שחקני עבר אגדיים, מאמנים מיתיים, משתתפות בליגות אירופה, ואירועים שעיצבו את זהות הקבוצה.\n\n"
+            f"📋 פורמט: כל עובדה בשורה נפרדת, פותחת באימוג'י מתאים, קצרה (1-2 משפטים), "
+            f"עם פרטים מדויקים (שנה, יריבה, תוצאה, שמות). טון עיתונאי-אוהד — חי וגאה אך מדויק, ללא קלישאות.\n\n"
+            f"⚠️ קריטי: אל תמציא. אם אינך בטוח בשנה/תוצאה/שם — בחר עובדה אחרת, אל תנחש.\n"
+            f"⚠️ הפועל פתח תקווה בלבד — לא מכבי פתח תקווה!\n\n"
+            f"החזר רק את 3 העובדות, ללא כותרת או הקדמה."
         )
-        if fact and send_telegram(f"📜 *פינת ההיסטוריה הכחולה:* \n\n{fact}"):
+        fact = call_gemini(fact_prompt, label="history-fact")
+        if fact and send_telegram(f"📜 *פינת ההיסטוריה הכחולה* 💙\n\n{fact}"):
             with open("task_log.txt", 'a', encoding='utf-8') as f:
                 f.write(f"history_{today_str}\n")
 
@@ -1008,6 +1101,11 @@ def main():
     # =====================================================
     # 3. 🆕 ניהול יום משחק - תזמון דינמי
     # =====================================================
+    # הקשר זמן לפרומפט הסיכום (כדי שגמיני לא ימציא 'הערב'/'מחר')
+    today_he = format_today_he()
+    next_match_he = get_next_match_info(schedule_data)
+    print(f"DEBUG: 📅 הקשר זמן לסיכומים: {today_he} | משחק קרוב: {next_match_he}", flush=True)
+
     match_today = get_match_today(schedule_data) if ENABLE_MATCHDAY_LOGIC else None
 
     if match_today:
@@ -1295,7 +1393,8 @@ def main():
                         f.write(clean_l + "\n")
                     continue
 
-                summary = get_ai_summary(title, content, is_official=is_official)
+                summary = get_ai_summary(title, content, is_official=is_official,
+                                         today_he=today_he, next_match_he=next_match_he)
 
                 if not summary or len(summary) < 15:
                     if is_official:
