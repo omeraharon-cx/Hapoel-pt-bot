@@ -37,6 +37,7 @@ ONE_TABLE_URL = "https://m.one.co.il/Mobile/Leagues/LeagueSelector.aspx?l=1&bz=2
 #   "gemini-2.5-flash" - מאוזן, ב-free tier (מומלץ! ✅)
 #   "gemini-2.0-flash" - ❌ הוצא מ-free tier (limit: 0) במאי 2026
 GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-lite"  # מכסה נפרדת — נכנס לפעולה כשהראשי מחזיר 429
 
 # =====================================================
 # 🎛️  מתג מצב הפעלה
@@ -386,16 +387,16 @@ def send_telegram(text, method="sendMessage", payload=None):
     return overall_status
 
 
-# 🆕 משתנה גלובלי שמסמן אם נחסמנו ע"י Gemini (חרגנו מהמכסה)
-# אם True - נחזיר None לכל הקריאות הבאות בריצה הזו, חוסך זמן וטוקנים
-GEMINI_QUOTA_EXCEEDED = False
+# 🆕 set של מודלי Gemini שחרגו ממכסה בריצה הנוכחית.
+# כשהראשי חוזר 429 — מנסים את ה-fallback (מכסה נפרדת). רק כשכולם פנימה — נפסיק לקרוא.
+GEMINI_EXHAUSTED_MODELS = set()
 
 # =====================================================
 # 🆕 ניטור מכסות API + התראות לאדמין
 # =====================================================
 GEMINI_USAGE_FILE = "gemini_usage.txt"
-GEMINI_DAILY_LIMIT = 1500
-GEMINI_ALERT_THRESHOLD = 1200  # 80% — אלרט מקדים
+GEMINI_LAST_ALERT_FILE = "gemini_last_alert.txt"  # תאריך ההתראה האחרונה — אחת ל-3 ימים מקסימום
+GEMINI_ALERT_COOLDOWN_DAYS = 3
 
 
 def send_admin_alert(msg):
@@ -437,6 +438,31 @@ def mark_alerted_today(alert_type):
         print(f"DEBUG: שגיאה בסימון התראה: {e}", flush=True)
 
 
+def gemini_alerted_recently():
+    """True אם שלחנו התראת חריגת-מכסה ב-N הימים האחרונים (cooldown)."""
+    if not os.path.exists(GEMINI_LAST_ALERT_FILE):
+        return False
+    try:
+        with open(GEMINI_LAST_ALERT_FILE, 'r', encoding='utf-8') as f:
+            last_str = f.read().strip()
+        if not last_str:
+            return False
+        last_date = datetime.strptime(last_str, '%Y-%m-%d').date()
+        today = get_israel_time().date()
+        return (today - last_date).days < GEMINI_ALERT_COOLDOWN_DAYS
+    except Exception:
+        return False
+
+
+def mark_gemini_alerted():
+    today = get_israel_time().strftime('%Y-%m-%d')
+    try:
+        with open(GEMINI_LAST_ALERT_FILE, 'w', encoding='utf-8') as f:
+            f.write(today)
+    except Exception as e:
+        print(f"DEBUG: שגיאה בסימון התראת Gemini: {e}", flush=True)
+
+
 def increment_gemini_usage():
     """מגדיל את מונה השימוש היומי של Gemini ומחזיר את הסכום החדש.
     הקובץ מכיל שורה אחת בפורמט: YYYY-MM-DD|count.
@@ -462,91 +488,84 @@ def increment_gemini_usage():
     return count
 
 
-def call_gemini(prompt, timeout=30, label="generic"):
-    """קריאה ל-Gemini API"""
-    global GEMINI_QUOTA_EXCEEDED
-
-    if not GEMINI_API_KEY:
-        if DEBUG_GEMINI:
-            print(f"  [GEMINI:{label}] ⚠️ אין מפתח API!", flush=True)
-        return None
-
-    # 🆕 אם כבר חרגנו מהמכסה - לא נמשיך לנסות
-    if GEMINI_QUOTA_EXCEEDED:
-        if DEBUG_GEMINI:
-            print(f"  [GEMINI:{label}] ⏭️ דילוג - מכסת Gemini הסתיימה לריצה הזו", flush=True)
-        return None
-
-    if DEBUG_GEMINI:
-        prompt_preview = prompt[:200].replace('\n', ' ')
-        print(f"  [GEMINI:{label}] 📤 שולח (אורך: {len(prompt)}): {prompt_preview}...", flush=True)
-
-    url_g = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-
+def _call_gemini_once(prompt, model, timeout, label):
+    """ניסיון בודד מול מודל ספציפי. מחזיר (טקסט_או_None, status_code)."""
+    url_g = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
     try:
         res = requests.post(
             url_g,
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=timeout
         )
-
-        # 🆕 טיפול ב-429 - מכסה הסתיימה
         if res.status_code == 429:
-            print(f"  [GEMINI:{label}] 🛑 429 מ-Gemini. גוף התשובה: {res.text[:800]}", flush=True)
-            GEMINI_QUOTA_EXCEEDED = True
-            if not already_alerted_today("gemini_exceeded"):
-                send_admin_alert(
-                    "🛑 *חריגה ממכסת Gemini היומית!*\n\n"
-                    "הריצה הנוכחית הפסיקה לקרוא ל-Gemini עד שהמכסה תתאפס.\n\n"
-                    "*הצעות פתרון:*\n"
-                    "1. להמתין לאיפוס יומי ב-10:00 בבוקר (חצות PT).\n"
-                    "2. להחליף זמנית מודל ב-`GEMINI_MODEL` למודל קל יותר.\n"
-                    "3. להפחית כמות כתבות לריצה (כיום עד 8)."
-                )
-                mark_alerted_today("gemini_exceeded")
-            return None
-
+            print(f"  [GEMINI:{label}:{model}] 🛑 429 - quota exceeded", flush=True)
+            return None, 429
         if res.status_code != 200:
             if DEBUG_GEMINI:
-                print(f"  [GEMINI:{label}] ❌ HTTP {res.status_code}: {res.text[:300]}", flush=True)
-            return None
-
+                print(f"  [GEMINI:{label}:{model}] ❌ HTTP {res.status_code}: {res.text[:300]}", flush=True)
+            return None, res.status_code
         data = res.json()
-
         if 'candidates' not in data or not data['candidates']:
             if DEBUG_GEMINI:
-                print(f"  [GEMINI:{label}] ⚠️ אין candidates", flush=True)
-            return None
-
+                print(f"  [GEMINI:{label}:{model}] ⚠️ אין candidates", flush=True)
+            return None, 200
         candidate = data['candidates'][0]
         if 'content' not in candidate or 'parts' not in candidate['content']:
-            return None
-
-        result = candidate['content']['parts'][0]['text'].strip()
-
-        if DEBUG_GEMINI:
-            print(f"  [GEMINI:{label}] 📥 קיבל ({len(result)} תווים): {result[:300]}", flush=True)
-
-        # 🆕 ספירת שימוש יומי ואלרט מקדים על 80% מהמכסה
-        usage = increment_gemini_usage()
-        if usage >= GEMINI_ALERT_THRESHOLD and not already_alerted_today("gemini_warn"):
-            send_admin_alert(
-                f"⚠️ *התראת מכסה: Gemini*\n\n"
-                f"נוצלו *{usage}/{GEMINI_DAILY_LIMIT}* קריאות יומיות "
-                f"({int(usage * 100 / GEMINI_DAILY_LIMIT)}%).\n\n"
-                f"*הצעות פתרון:*\n"
-                f"1. להמתין לאיפוס יומי ב-10:00 בבוקר (חצות PT).\n"
-                f"2. להחליף זמנית מודל ב-`GEMINI_MODEL` למודל קל יותר.\n"
-                f"3. להפחית כמות כתבות לריצה (כיום עד 8)."
-            )
-            mark_alerted_today("gemini_warn")
-
-        return result
-
+            return None, 200
+        return candidate['content']['parts'][0]['text'].strip(), 200
     except Exception as e:
         if DEBUG_GEMINI:
-            print(f"  [GEMINI:{label}] ❌ Exception: {e}", flush=True)
+            print(f"  [GEMINI:{label}:{model}] ❌ exception: {e}", flush=True)
+        return None, 0
+
+
+def call_gemini(prompt, timeout=30, label="generic"):
+    """קריאה ל-Gemini עם fallback אוטומטי ל-`GEMINI_FALLBACK_MODEL` כשהראשי חורג ממכסה."""
+    if not GEMINI_API_KEY:
+        if DEBUG_GEMINI:
+            print(f"  [GEMINI:{label}] ⚠️ אין מפתח API!", flush=True)
         return None
+
+    candidates = [GEMINI_MODEL]
+    if GEMINI_FALLBACK_MODEL and GEMINI_FALLBACK_MODEL != GEMINI_MODEL:
+        candidates.append(GEMINI_FALLBACK_MODEL)
+    candidates = [m for m in candidates if m not in GEMINI_EXHAUSTED_MODELS]
+
+    if not candidates:
+        if DEBUG_GEMINI:
+            print(f"  [GEMINI:{label}] ⏭️ דילוג - כל המודלים חרגו ממכסה בריצה הזו", flush=True)
+        return None
+
+    if DEBUG_GEMINI:
+        prompt_preview = prompt[:200].replace('\n', ' ')
+        print(f"  [GEMINI:{label}] 📤 שולח (אורך: {len(prompt)}): {prompt_preview}...", flush=True)
+
+    for model in candidates:
+        result, status = _call_gemini_once(prompt, model, timeout, label)
+        if result is not None:
+            increment_gemini_usage()
+            if DEBUG_GEMINI:
+                print(f"  [GEMINI:{label}:{model}] 📥 קיבל ({len(result)} תווים): {result[:300]}", flush=True)
+            return result
+        if status == 429:
+            GEMINI_EXHAUSTED_MODELS.add(model)
+            if model == GEMINI_MODEL and GEMINI_FALLBACK_MODEL not in GEMINI_EXHAUSTED_MODELS:
+                print(f"  [GEMINI:{label}] 🔄 עובר ל-fallback: {GEMINI_FALLBACK_MODEL}", flush=True)
+            continue
+        # שגיאה לא-מכסה (רשת/JSON/HTTP אחר) — לא לנסות fallback, החזר כשל
+        return None
+
+    # כל המודלים חרגו — שלח התראה אם לא שלחנו ב-N הימים האחרונים
+    if not gemini_alerted_recently():
+        send_admin_alert(
+            "🛑 *מכסת Gemini הסתיימה לכל המודלים*\n\n"
+            f"גם `{GEMINI_MODEL}` וגם ה-fallback `{GEMINI_FALLBACK_MODEL}` חרגו ממכסה היומית.\n\n"
+            "⏰ המכסה תתאפס ב-10:00 בבוקר (חצות PT).\n\n"
+            f"_זוהי תזכורת אחת ל-{GEMINI_ALERT_COOLDOWN_DAYS} ימים — אם זה קורה בקביעות, "
+            "שווה לשקול תוכנית בתשלום או להפחית את `MAX_ARTICLES_PER_RUN`._"
+        )
+        mark_gemini_alerted()
+    return None
 
 
 def is_article_main_topic_hapoel_pt(title, content):
@@ -764,15 +783,33 @@ def save_schedule(schedule_data):
         json.dump(schedule_data, f, ensure_ascii=False, indent=2)
 
 
+ONE_API_FAIL_FLAG = "one_api_failed.flag"
+
+
+def _is_transient_one_error(err):
+    if isinstance(err, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+        return True
+    if isinstance(err, requests.exceptions.HTTPError):
+        resp = getattr(err, 'response', None)
+        if resp is not None and 500 <= resp.status_code < 600:
+            return True
+    return False
+
+
 def fetch_team_data_from_one():
     """
     🎯 מביא את כל נתוני הקבוצה מ-one.co.il (חינמי, ללא מכסה).
     מחזיר dict עם upcomingMatches, recentMatches, squad, וכו' — או None בשגיאה.
-    מנסה עד 2 פעמים עם timeout נדיב, כדי לא להיתפס על blip חולף.
+
+    רטריי: עד 3 ניסיונות עם backoff (5s → 15s) רק לשגיאות חולפות (5xx/timeout/connection).
+    שגיאות קבועות (404, JSON שבור) — כשל מיידי בלי רטריי.
+
+    התראת אדמין: רק אם גם הריצה הקודמת נכשלה (כדי לא להתריע על blip חולף).
     """
     print("DEBUG: 📡 קורא ל-one.co.il API", flush=True)
+    backoffs = [5, 15]  # sleeps between attempts 1→2, 2→3
     last_err = None
-    for attempt in (1, 2):
+    for attempt in range(1, 4):
         try:
             resp = requests.get(
                 ONE_API_URL,
@@ -780,22 +817,43 @@ def fetch_team_data_from_one():
                 timeout=25
             )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            if os.path.exists(ONE_API_FAIL_FLAG):
+                try:
+                    os.remove(ONE_API_FAIL_FLAG)
+                except Exception:
+                    pass
+            return data
         except Exception as e:
             last_err = e
-            print(f"DEBUG: ⚠️ ניסיון {attempt}/2 נכשל: {e}", flush=True)
-            if attempt == 1:
-                time.sleep(3)
+            transient = _is_transient_one_error(e)
+            kind = "חולף" if transient else "קבוע"
+            print(f"DEBUG: ⚠️ ניסיון {attempt}/3 נכשל ({kind}): {e}", flush=True)
+            if not transient:
+                break
+            if attempt < 3:
+                time.sleep(backoffs[attempt - 1])
 
     print(f"DEBUG: ❌ כל הניסיונות נכשלו: {last_err}", flush=True)
-    if not already_alerted_today("one_api_down"):
+
+    prev_run_failed = os.path.exists(ONE_API_FAIL_FLAG)
+    try:
+        with open(ONE_API_FAIL_FLAG, 'w', encoding='utf-8') as f:
+            f.write(get_israel_time().isoformat())
+    except Exception as e:
+        print(f"DEBUG: לא ניתן לסמן כשל: {e}", flush=True)
+
+    if prev_run_failed and not already_alerted_today("one_api_down"):
         send_admin_alert(
             "⚠️ *one.co.il API לא זמין*\n\n"
             f"שגיאה: `{last_err}`\n\n"
+            "⏱ זה הכשל הרצוף השני — לא רק blip חולף.\n"
             "המערכת תשתמש בלוח cache או ב-`BACKUP_SCHEDULE`. "
             "כדאי לבדוק שהמבנה לא השתנה."
         )
         mark_alerted_today("one_api_down")
+    elif not prev_run_failed:
+        print("DEBUG: 🔕 לא שולחים התראה — הריצה הקודמת הצליחה (כנראה blip חולף)", flush=True)
     return None
 
 
@@ -1071,7 +1129,7 @@ def main():
     # 4. סריקת כתבות RSS
     # =====================================================
     processed_count = 0
-    MAX_ARTICLES_PER_RUN = 8
+    MAX_ARTICLES_PER_RUN = 6  # הופחת מ-8 כדי לחסוך במכסת Gemini (כל כתבה = ~1-2 קריאות)
 
     stats = {
         "total_seen": 0, "filtered_already_seen": 0, "filtered_too_old": 0,

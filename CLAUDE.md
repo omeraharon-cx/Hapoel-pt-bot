@@ -119,11 +119,12 @@ The filter logic: if **only** Maccabi is mentioned (no Hapoel) → block. If bot
 - **Free tier**: per-model, varies (check https://ai.google.dev/gemini-api/docs/rate-limits)
 - **Resets**: midnight Pacific Time = 10:00 AM Israel (PDT) / 11:00 AM Israel (PST)
 - ⚠️ `gemini-2.0-flash` was dropped from free tier (limit: 0) in May 2026 — code now uses `gemini-2.5-flash`
+- **Auto-fallback**: when primary model returns 429, `call_gemini` automatically retries with `GEMINI_FALLBACK_MODEL` (`gemini-2.5-flash-lite` — separate quota). Tracked per-model in `GEMINI_EXHAUSTED_MODELS` set.
+- **Alert cadence**: admin alert only when *both* models exhaust, and at most once every `GEMINI_ALERT_COOLDOWN_DAYS` (3 days). Persisted in `gemini_last_alert.txt`.
 - **Optimizations**:
   - `topic-check` skipped when title clearly mentions full Hapoel PT name
   - `dup-check` is local Jaccard similarity (no Gemini)
-  - `GEMINI_QUOTA_EXCEEDED` global flag stops trying after 429
-  - Max 8 articles per run
+  - `MAX_ARTICLES_PER_RUN = 6` (was 8)
 
 ---
 
