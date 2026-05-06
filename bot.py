@@ -60,6 +60,11 @@ MATCHDAY_MIN_HOUR = 11
 # כמה דקות אחרי המשחק להמתין לפני בדיקת סיום (משחק כדורגל ~110 דק')
 MATCH_DURATION_MINUTES = 110
 
+# חסימת סריקת RSS בחלון [משחק - X דק', משחק + MATCH_DURATION_MINUTES]
+# מטרה: למנוע מכתבה פרי-מאצ' שעלתה בבוקר להישלח באמצע המשחק (לא רלוונטית),
+# וגם למנוע "תקצירים בזמן אמת" של חצי-זמן/חי. כתבות יחזרו בריצה הראשונה אחרי החלון.
+MATCH_RSS_PRE_BUFFER_MINUTES = 30
+
 # מצבי דיבוג
 DEBUG_VERBOSE = True
 DEBUG_GEMINI = True
@@ -1216,6 +1221,7 @@ def main():
     print(f"DEBUG: 📅 הקשר זמן לסיכומים: {today_he} | משחק קרוב: {next_match_he}", flush=True)
 
     match_today = get_match_today(schedule_data) if ENABLE_MATCHDAY_LOGIC else None
+    in_match_window = False  # נקבע למטה אם רלוונטי, ומשפיע על דילוג סריקת RSS
 
     if match_today:
         opp_heb = match_today["opponent"]
@@ -1232,6 +1238,11 @@ def main():
 
         if match_time:
             print(f"DEBUG: ⚽ יום משחק! נגד {opp_heb}, פתיחה ב-{match_time.strftime('%H:%M')}", flush=True)
+            window_start = match_time - timedelta(minutes=MATCH_RSS_PRE_BUFFER_MINUTES)
+            window_end = match_time + timedelta(minutes=MATCH_DURATION_MINUTES)
+            if window_start <= now_il <= window_end:
+                in_match_window = True
+                print(f"DEBUG: ⏸️ בחלון משחק ({window_start.strftime('%H:%M')}–{window_end.strftime('%H:%M')}) — סריקת RSS תדולג", flush=True)
         else:
             print(f"DEBUG: ⚽ יום משחק! נגד {opp_heb} (אין שעת התחלה - מצב גיבוי)", flush=True)
 
@@ -1348,7 +1359,11 @@ def main():
 
     print(f"\nDEBUG: === סריקת כתבות ({len(RSS_SOURCES)} מקורות) ===", flush=True)
 
-    for source in RSS_SOURCES:
+    # 🆕 חסימה במהלך משחק — לא מסמנים שום URL כ"נראה" כדי שכתבות יחזרו אחרי החלון.
+    if in_match_window:
+        print("DEBUG: ⏸️ דילוג מלא על סריקת RSS — נמשיך אחרי סיום המשחק", flush=True)
+
+    for source in (RSS_SOURCES if not in_match_window else []):
         if processed_count >= MAX_ARTICLES_PER_RUN:
             break
 
