@@ -1,6 +1,7 @@
 import feedparser
 import requests
 import os
+import re
 import time
 import sys
 import random
@@ -694,47 +695,94 @@ def get_ai_summary(title, content, is_official=False, today_he=None, next_match_
     return summary
 
 
+# מילים נפוצות שלא משמעותיות לזיהוי "אותו מסר" (stop words עברית/אנגלית בסיסיות).
+# מסירים אותן לפני Jaccard כדי למנוע false positives על מילות חיבור שמופיעות בכל כתבה.
+_DUP_STOPWORDS = {
+    "של", "עם", "על", "את", "אבל", "כמו", "אחרי", "לפני", "כדי", "בין",
+    "מול", "אצל", "בלי", "תוך", "בעוד", "ועוד", "וגם", "כבר", "עוד", "רק",
+    "היה", "היא", "הוא", "הם", "הן", "אני", "אתה", "אנחנו", "אתם", "זה",
+    "זאת", "אלה", "אלו", "כל", "יש", "אין", "לא", "כן", "מה", "מי", "איך",
+    "למה", "איפה", "מתי", "אם", "או", "אך", "כי", "אך", "גם",
+    "the", "and", "for", "with", "from", "this", "that", "was", "are", "have", "has",
+}
+
+_TOKEN_RE = re.compile(r"[A-Za-z֐-׿]{3,}")  # מילים עבריות/לטיניות באורך ≥3
+
+
+def _tokenize_for_dup(text):
+    """מחלץ סט טוקנים משמעותיים לזיהוי דמיון תוכן."""
+    if not text:
+        return set()
+    return {m.group(0).lower() for m in _TOKEN_RE.finditer(text)} - _DUP_STOPWORDS
+
+
+# מטריקות דמיון ל-fallback מקומי (כשגמיני לא זמין):
+# - overlap coefficient = חיתוך / הקטן יותר. רגיש למקרה של כתבה ארוכה מול תקציר קצר.
+# - shared count = מספר אבסולוטי של טוקנים משותפים. מסנן מקרים שבהם שני סטים קטנים מאוד "מתאחדים" בקלות.
+# שני התנאים יחד = שמרני נגד false positives.
+DUP_OVERLAP_THRESHOLD = 0.32
+DUP_MIN_SHARED_TOKENS = 8
+
+
+def _is_same_message_local(new_text, recent_summaries):
+    """Fallback מקומי לזיהוי 'אותו מסר' כש-Gemini לא זמין."""
+    new_tokens = _tokenize_for_dup(new_text)
+    if len(new_tokens) < 10:
+        return False
+    for s in recent_summaries:
+        old_tokens = _tokenize_for_dup(s)
+        if len(old_tokens) < 10:
+            continue
+        shared = len(new_tokens & old_tokens)
+        smaller = min(len(new_tokens), len(old_tokens))
+        overlap = shared / smaller if smaller else 0.0
+        if shared >= DUP_MIN_SHARED_TOKENS and overlap >= DUP_OVERLAP_THRESHOLD:
+            print(f"DEBUG:   🔁 fallback מקומי תפס כפילות (shared={shared}, overlap={overlap:.2f})", flush=True)
+            return True
+    return False
+
+
 def is_same_message_as_recent(title, content, recent_summaries):
     """
-    בודק עם Gemini אם הכתבה החדשה מעבירה את אותו מסר/אירוע כמו אחת
-    מהכתבות שכבר נשלחו לאחרונה — גם אם האתר אחר והניסוח שונה.
-    אם Gemini לא זמין (מכסה/שגיאה) — לא חוסמים, מעדיפים לשלוח על פני להחמיץ.
+    בודק אם הכתבה החדשה מעבירה את אותו מסר/אירוע כמו אחת מהכתבות שכבר נשלחו.
+
+    שלב 1: שואלים את Gemini (סמנטי — תופס סיקור של אותו אירוע מאתרים שונים).
+    שלב 2: אם Gemini לא זמין (מכסה/503/timeout) — fallback ל-overlap מקומי
+            במקום ברירת מחדל ל"לא כפול" (כי בכך נכנסות כפילויות).
     """
-    if not GEMINI_API_KEY:
-        return False
     if not recent_summaries.strip() or len(recent_summaries) < 50:
         return False
 
-    # רק 5 הסיכומים האחרונים — מספיק כדי לתפוס סיקור של אותו אירוע מאתרים שונים
-    # (כתבות חוזרות מתפזרות בטווח של שעות, לא ימים).
     summaries = [s.strip() for s in recent_summaries.split("|||")[-5:] if s.strip()]
     if not summaries:
         return False
 
-    numbered = "\n".join(f"{i+1}. {s[:400]}" for i, s in enumerate(summaries))
+    if GEMINI_API_KEY:
+        numbered = "\n".join(f"{i+1}. {s[:400]}" for i, s in enumerate(summaries))
+        prompt = (
+            "אתה עוזר לסנן כתבות שלא יישלחו פעמיים לערוץ אוהדים.\n\n"
+            "הכתבה החדשה:\n"
+            f"כותרת: {title}\n"
+            f"תוכן: {content[:1200]}\n\n"
+            "תקצירי כתבות שכבר נשלחו לאחרונה:\n"
+            f"{numbered}\n\n"
+            "האם הכתבה החדשה מעבירה את אותו מסר מרכזי כמו אחת מהכתבות שכבר נשלחו?\n"
+            "- 'אותו מסר' = סיקור של אותו אירוע יחיד (אותו משחק, אותה החתמה, אותה החלטה).\n"
+            "  גם אם הניסוח שונה והאתר שונה — זה עדיין אותו מסר.\n"
+            "- 'מסר שונה' = אירוע אחר. למשל:\n"
+            "  * תקציר משחק מול ראיון אחרי המשחק = שונה\n"
+            "  * הכרזה על החתמה מול תקציר משחק = שונה\n"
+            "  * תחזית/סקירה לפני משחק מול תוצאה אחרי המשחק = שונה\n"
+            "  * שני משחקים שונים של אותה הקבוצה = שונה\n\n"
+            "ענה YES אם הכתבה החדשה זהה במסר לאחת מהכתבות, NO אם המסר שלה ייחודי."
+        )
+        answer = call_gemini(prompt, timeout=20, label="dup-check")
+        if answer:
+            return "YES" in answer.upper()
+        # Gemini לא זמין — נופלים לבדיקה מקומית.
+        print("DEBUG:   ⚠️ dup-check ב-Gemini נכשל — בודק במטריקה מקומית", flush=True)
 
-    prompt = (
-        "אתה עוזר לסנן כתבות שלא יישלחו פעמיים לערוץ אוהדים.\n\n"
-        "הכתבה החדשה:\n"
-        f"כותרת: {title}\n"
-        f"תוכן: {content[:1200]}\n\n"
-        "תקצירי כתבות שכבר נשלחו לאחרונה:\n"
-        f"{numbered}\n\n"
-        "האם הכתבה החדשה מעבירה את אותו מסר מרכזי כמו אחת מהכתבות שכבר נשלחו?\n"
-        "- 'אותו מסר' = סיקור של אותו אירוע יחיד (אותו משחק, אותה החתמה, אותה החלטה).\n"
-        "  גם אם הניסוח שונה והאתר שונה — זה עדיין אותו מסר.\n"
-        "- 'מסר שונה' = אירוע אחר. למשל:\n"
-        "  * תקציר משחק מול ראיון אחרי המשחק = שונה\n"
-        "  * הכרזה על החתמה מול תקציר משחק = שונה\n"
-        "  * תחזית/סקירה לפני משחק מול תוצאה אחרי המשחק = שונה\n"
-        "  * שני משחקים שונים של אותה הקבוצה = שונה\n\n"
-        "ענה YES אם הכתבה החדשה זהה במסר לאחת מהכתבות, NO אם המסר שלה ייחודי."
-    )
-
-    answer = call_gemini(prompt, timeout=20, label="dup-check")
-    if not answer:
-        return False
-    return "YES" in answer.upper()
+    return _is_same_message_local(f"{title} {content[:1200]}", summaries)
 
 
 def extract_article_data(url):
