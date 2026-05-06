@@ -883,34 +883,60 @@ def fetch_team_data_from_one():
     return None
 
 
+def _one_match_to_entry(match):
+    """ממיר אובייקט משחק יחיד מ-one.co.il לפורמט הפנימי. מחזיר (date_key, entry) או None."""
+    try:
+        match_dt = datetime.fromisoformat(match['date'])
+        d_key = match_dt.strftime('%Y-%m-%d')
+        home = match.get('homeTeam', {})
+        away = match.get('awayTeam', {})
+        is_home = str(home.get('id')) == TEAM_ID
+        opponent = away.get('name') if is_home else home.get('name')
+        if not opponent:
+            return None
+        return d_key, {
+            "opponent": opponent,
+            "match_time_iso": match_dt.isoformat(),
+            "match_id": match.get('id'),
+            "is_home": is_home
+        }
+    except Exception as e:
+        print(f"DEBUG: ⚠️ דילוג על משחק: {e}", flush=True)
+        return None
+
+
 def parse_upcoming_matches(team_data):
-    """ממיר upcomingMatches מ-one.co.il לפורמט הפנימי: dict של תאריך → פרטי משחק."""
-    if not team_data or not team_data.get('upcomingMatches'):
+    """
+    ממיר upcomingMatches + (אם קיים) משחק של היום מ-recentMatches לפורמט הפנימי.
+
+    הסיבה לכלול את היום מ-recentMatches: ברגע שהמשחק מתחיל, one.co.il מעביר אותו
+    מ-upcomingMatches ל-recentMatches. בלי המיזוג הזה — הקוד היה רואה 'אין משחק היום'
+    באמצע יום משחק, ושובר את כל ה-flow של תוצאה+MVP.
+    """
+    if not team_data:
         return None
     new_matches = {}
-    for match in team_data['upcomingMatches']:
-        try:
-            match_dt = datetime.fromisoformat(match['date'])
-            d_key = match_dt.strftime('%Y-%m-%d')
-            home = match.get('homeTeam', {})
-            away = match.get('awayTeam', {})
-            is_home = str(home.get('id')) == TEAM_ID
-            opponent = away.get('name') if is_home else home.get('name')
-            if not opponent:
-                continue
-            new_matches[d_key] = {
-                "opponent": opponent,
-                "match_time_iso": match_dt.isoformat(),
-                "match_id": match.get('id'),
-                "is_home": is_home
-            }
-        except Exception as e:
-            print(f"DEBUG: ⚠️ דילוג על משחק עתידי: {e}", flush=True)
-            continue
-    if new_matches:
-        print(f"DEBUG: ✅ לוח עודכן עם {len(new_matches)} משחקים מ-one.co.il", flush=True)
-        return new_matches
-    return None
+    for match in team_data.get('upcomingMatches') or []:
+        parsed = _one_match_to_entry(match)
+        if parsed:
+            new_matches[parsed[0]] = parsed[1]
+
+    # מיזוג: משחק של היום מ-recentMatches שעוד לא מופיע (כי עבר ל-recent ברגע שהתחיל)
+    today_str = get_israel_time().strftime('%Y-%m-%d')
+    recovered = 0
+    for match in team_data.get('recentMatches') or []:
+        parsed = _one_match_to_entry(match)
+        if parsed and parsed[0] == today_str and today_str not in new_matches:
+            new_matches[today_str] = parsed[1]
+            recovered += 1
+
+    if not new_matches:
+        return None
+    msg = f"DEBUG: ✅ לוח עודכן עם {len(new_matches)} משחקים מ-one.co.il"
+    if recovered:
+        msg += f" (כולל {recovered} משחק של היום שכבר התחיל)"
+    print(msg, flush=True)
+    return new_matches
 
 
 def find_today_result(team_data, today_str):
