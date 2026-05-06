@@ -519,8 +519,17 @@ def _call_gemini_once(prompt, model, timeout, label):
         return None, 0
 
 
+# 5xx ו-status=0 (exception/timeout) — שגיאות חולפות ששווה retry. 4xx (חוץ מ-429) קבועות.
+GEMINI_TRANSIENT_STATUSES = {500, 502, 503, 504, 0}
+GEMINI_RETRY_BACKOFF = [3, 8]  # שניות לפני ניסיונות 2 ו-3 (סה"כ 3 ניסיונות לכל מודל)
+
+
 def call_gemini(prompt, timeout=30, label="generic"):
-    """קריאה ל-Gemini עם fallback אוטומטי ל-`GEMINI_FALLBACK_MODEL` כשהראשי חורג ממכסה."""
+    """
+    קריאה ל-Gemini עם:
+    1. retry על שגיאות חולפות (503/timeout) באותו מודל לפני מעבר fallback.
+    2. fallback אוטומטי ל-`GEMINI_FALLBACK_MODEL` על 429 או על כשל חולף מתמשך.
+    """
     if not GEMINI_API_KEY:
         if DEBUG_GEMINI:
             print(f"  [GEMINI:{label}] ⚠️ אין מפתח API!", flush=True)
@@ -540,19 +549,39 @@ def call_gemini(prompt, timeout=30, label="generic"):
         prompt_preview = prompt[:200].replace('\n', ' ')
         print(f"  [GEMINI:{label}] 📤 שולח (אורך: {len(prompt)}): {prompt_preview}...", flush=True)
 
+    max_attempts = 1 + len(GEMINI_RETRY_BACKOFF)
     for model in candidates:
-        result, status = _call_gemini_once(prompt, model, timeout, label)
-        if result is not None:
-            increment_gemini_usage()
-            if DEBUG_GEMINI:
-                print(f"  [GEMINI:{label}:{model}] 📥 קיבל ({len(result)} תווים): {result[:300]}", flush=True)
-            return result
-        if status == 429:
+        final_status = None
+        for attempt in range(max_attempts):
+            result, status = _call_gemini_once(prompt, model, timeout, label)
+            if result is not None:
+                increment_gemini_usage()
+                if DEBUG_GEMINI:
+                    print(f"  [GEMINI:{label}:{model}] 📥 קיבל ({len(result)} תווים): {result[:300]}", flush=True)
+                return result
+            final_status = status
+            # 429 = מכסה. אין טעם ב-retry על אותו מודל — עבר ל-fallback.
+            if status == 429:
+                break
+            # שגיאה חולפת ויש עוד ניסיונות → המתן ונסה שוב.
+            if status in GEMINI_TRANSIENT_STATUSES and attempt < max_attempts - 1:
+                wait = GEMINI_RETRY_BACKOFF[attempt]
+                print(f"  [GEMINI:{label}:{model}] ⏳ retry {attempt + 2}/{max_attempts} בעוד {wait}s (status={status})", flush=True)
+                time.sleep(wait)
+                continue
+            # שגיאה קבועה (4xx שאינה 429) או הניסיון האחרון של חולף — צא מהלולאה.
+            break
+
+        if final_status == 429:
             GEMINI_EXHAUSTED_MODELS.add(model)
             if model == GEMINI_MODEL and GEMINI_FALLBACK_MODEL not in GEMINI_EXHAUSTED_MODELS:
                 print(f"  [GEMINI:{label}] 🔄 עובר ל-fallback: {GEMINI_FALLBACK_MODEL}", flush=True)
             continue
-        # שגיאה לא-מכסה (רשת/JSON/HTTP אחר) — לא לנסות fallback, החזר כשל
+        if final_status in GEMINI_TRANSIENT_STATUSES:
+            # נכשל אחרי כל ה-retries — אולי ה-fallback יותר זמין.
+            print(f"  [GEMINI:{label}:{model}] ❌ נכשל אחרי {max_attempts} ניסיונות (status={final_status})", flush=True)
+            continue
+        # שגיאה קבועה (פרומפט פגום וכו') — אין טעם בfallback.
         return None
 
     # כל המודלים חרגו — שלח התראה אם לא שלחנו ב-N הימים האחרונים
